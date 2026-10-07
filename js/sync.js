@@ -293,15 +293,18 @@ window.LM = window.LM || {};
     return toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text))));
   }
 
+  // 확인용 표식은 만든 기기에 따라 압축돼 있을 수도, 아닐 수도 있다. 두 방식 모두 풀어 본다.
+  // (열쇠가 틀리면 암호 해제 단계에서 실패하므로 틀린 비밀번호가 통과할 일은 없다.)
   async function checkKey(key, f) {
-    try {
-      return (await open(key, { iv: f.checkIv, data: f.checkData, z: false })) === CHECK_TEXT;
-    } catch (err) {
-      return false;
+    for (const z of [false, true]) {
+      try {
+        if ((await open(key, { iv: f.checkIv, data: f.checkData, z })) === CHECK_TEXT) return true;
+      } catch (err) { /* 다음 방식으로 */ }
     }
+    return false;
   }
 
-  LM.syncCrypto = { deriveKey, seal, open, sha, toB64, fromB64 }; // 확인용
+  LM.syncCrypto = { deriveKey, seal, open, sha, toB64, fromB64, checkKey, CHECK_TEXT }; // 확인용
 
   // ---------- 동기화 엔진 (보관소 방식과 무관) ----------
   // transport: { list() → {문서id: 바뀐시각}, read(id) → {payload, updateTime}, write(id, json, 알던시각) → 새 시각 }
@@ -585,6 +588,31 @@ window.LM = window.LM || {};
     }
   };
 
+  // 기록 잠금 열쇠를 새로 만들고, 비밀번호 확인용 표식을 보관소에 둔다.
+  async function createLock(password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const k = await deriveKey(password, salt);
+    const check = await seal(k, CHECK_TEXT);
+    const body = toFields({ v: 1, salt: toB64(salt), checkIv: check.iv, checkData: check.data, checkZ: check.z, createdAt: Date.now() });
+    const made = await fsFetch(`users/${info.uid}/meta/crypto?currentDocument.exists=false`, { method: 'PATCH', body: JSON.stringify(body) });
+    if (!made) throw new SyncError('nodb', 'Firestore 데이터베이스를 찾지 못했어요. Firebase에서 데이터베이스를 만들었는지 확인해 주세요.');
+    return k;
+  }
+
+  // 처음 비밀번호를 잊었을 때: 클라우드 기록을 지우고 지금 비밀번호로 잠금을 새로 만든다.
+  // 이어서 이 기기의 기록을 올리므로, 이 기기에 없는 클라우드 기록만 사라진다.
+  S.resetCloud = async (password) => {
+    if (!info || !session) throw new SyncError('relogin', '다시 로그인해 주세요.');
+    const blobs = await firebaseTransport().list();
+    for (const id of Object.keys(blobs)) {
+      await fsFetch(`users/${info.uid}/blobs/${id}`, { method: 'DELETE' });
+    }
+    await fsFetch(`users/${info.uid}/meta/crypto`, { method: 'DELETE' });
+    info.docs = {};
+    pendingCrypto = null;
+    return finishLogin(await createLock(password));
+  };
+
   // 로그인. 처음 쓰는 계정이면 기록 잠금 열쇠를 새로 만든다.
   S.login = async (email, password) => {
     if (!CFG) throw new SyncError('other', 'Firebase 연결 정보가 없어요.');
@@ -595,22 +623,13 @@ window.LM = window.LM || {};
     session = { idToken: auth.idToken, expiresAt: Date.now() + Number(auth.expiresIn) * 1000 };
     info = { email: auth.email || email, uid: auth.localId, refreshToken: auth.refreshToken, docs: {} };
 
-    const cryptoPath = `users/${info.uid}/meta/crypto`;
-    const doc = await fsFetch(cryptoPath);
-    if (!doc) {
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const k = await deriveKey(password, salt);
-      const check = await seal(k, CHECK_TEXT);
-      const body = toFields({ v: 1, salt: toB64(salt), checkIv: check.iv, checkData: check.data, createdAt: Date.now() });
-      const made = await fsFetch(`${cryptoPath}?currentDocument.exists=false`, { method: 'PATCH', body: JSON.stringify(body) });
-      if (!made) throw new SyncError('nodb', 'Firestore 데이터베이스를 찾지 못했어요. Firebase에서 데이터베이스를 만들었는지 확인해 주세요.');
-      return finishLogin(k);
-    }
+    const doc = await fsFetch(`users/${info.uid}/meta/crypto`);
+    if (!doc) return finishLogin(await createLock(password));
     const f = fromFields(doc);
     const k = await deriveKey(password, fromB64(f.salt));
     if (!(await checkKey(k, f))) {
       pendingCrypto = f;
-      throw new SyncError('crypto-mismatch', '보관된 기록이 다른 비밀번호로 잠겨 있어요. 처음 동기화를 켤 때 쓴 비밀번호를 입력해 주세요.');
+      throw new SyncError('crypto-mismatch', '이 계정의 기록은 처음 동기화를 켤 때 쓴 비밀번호로 잠겨 있어요. 그 뒤에 Firebase 비밀번호를 바꾸셨다면 처음 비밀번호를 입력해 주세요.');
     }
     return finishLogin(k);
   };

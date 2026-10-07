@@ -1735,12 +1735,13 @@
   }));
 
   // 비밀번호를 바꾼 뒤 로그인하면, 처음 동기화할 때 쓴 비밀번호로 기록 잠금을 연다.
-  async function unlockFlow(message) {
+  async function unlockFlow(message, newPassword) {
     const old = await ask(`
       <form data-submit="modal-ok">
         <h2>기록 잠금 열기</h2>
         <p>${esc(message)}</p>
         <label class="field"><span>처음 동기화할 때 쓴 비밀번호</span><input id="old-password" type="password" autocomplete="off"></label>
+        <button type="button" class="btn small ghost" data-action="modal-choice" data-value="__reset__">처음 비밀번호가 기억나지 않아요</button>
         <div class="modal-actions">
           <button type="button" class="btn ghost" data-action="close-modal">취소</button>
           <button class="btn primary">열기</button>
@@ -1750,13 +1751,33 @@
       await LM.sync.logout();
       return null;
     }
+    if (old === '__reset__') {
+      const ok = await confirmModal({
+        title: '클라우드 기록을 새로 잠글까요?',
+        body: state
+          ? `클라우드에 있던 기록을 지우고, 이 기기의 기록(${state.character.name}, 일지 ${state.entries.length}개)을 지금 비밀번호로 다시 올려요. 이 기기에 없는 기록만 사라지니, 기록이 가장 많은 기기에서 하세요.`
+          : '이 기기에는 기록이 없어서, 클라우드 기록이 모두 지워지고 빈 상태로 다시 시작해요. 기록이 있는 다른 기기에서 하시는 걸 권해요.',
+        okLabel: '새로 잠그기',
+        danger: true,
+      });
+      if (!ok) return unlockFlow(message, newPassword);
+      openModal(loadingHtml('클라우드 기록을 새로 잠그는 중…'), { locked: true });
+      try {
+        return await LM.sync.resetCloud(newPassword);
+      } catch (err) {
+        closeModal();
+        toast(err.message);
+        await LM.sync.logout();
+        return null;
+      }
+    }
     openModal(loadingHtml('기록 잠금을 여는 중…'), { locked: true });
     try {
       return await LM.sync.unlock(old);
     } catch (err) {
       closeModal();
       toast(err.message);
-      return unlockFlow(message);
+      return unlockFlow(message, newPassword);
     }
   }
 
@@ -1774,7 +1795,7 @@
     } catch (err) {
       closeModal();
       if (err.kind === 'crypto-mismatch') {
-        result = await unlockFlow(err.message);
+        result = await unlockFlow(err.message, cred.password);
         if (!result) return;
       } else {
         await LM.sync.logout();
