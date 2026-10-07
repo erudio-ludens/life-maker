@@ -1,3 +1,10 @@
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 일기가 들어 있는 백업 파일이나 키를 적어 둔 파일이 실수로 이 폴더에 들어와도 GitHub에 올라가지 않게 막는다
+*백업*.json
+*backup*.json
+*.key
+.env
+.env.*

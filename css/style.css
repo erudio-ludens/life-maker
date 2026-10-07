@@ -285,7 +285,7 @@ a { color: inherit; }
 .field.inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .field.inline > span { margin: 0; }
 
-input:not([type]), input[type="text"], input[type="password"], input[type="number"], select, textarea {
+input:not([type]), input[type="text"], input[type="email"], input[type="password"], input[type="number"], select, textarea {
   width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -876,6 +876,26 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 @media (max-width: 380px) {
   .gacha-results.many { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+/* ---------- 고르기 창 ---------- */
+
+.choice-list { display: grid; gap: 8px; margin-top: 12px; }
+
+.choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.choice:hover { border-color: var(--accent); background: var(--accent-soft); }
+.choice b { display: block; font-size: 15px; }
+.choice small { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
 
 /* ---------- 설정 머리 ---------- */
 

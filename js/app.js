@@ -98,8 +98,18 @@
   }
 
   async function commit() {
+    LM.syncTrack(state);
     recompute();
     await LM.db.save(state);
+    LM.sync.schedule();
+  }
+
+  // 동기화로 받은 상태를 저장할 때. 다른 기기의 변경이라 '방금 바꿈' 표시는 하지 않는다.
+  async function saveSynced() {
+    recompute();
+    await LM.db.save(state);
+    LM.syncSnap(state);
+    LM.sync.schedule();
   }
 
   const avatarItem = () => (state.character.avatar && wallet.owned[state.character.avatar]
@@ -133,6 +143,7 @@
     s.room.theme = LM.ROOM_THEMES[s.room.theme] ? s.room.theme : 'cream';
     s.room.items = s.room.items || [];
     LM.ensureAvatarInRoom(s);
+    LM.ensureSyncMeta(s);
     s.settings = s.settings || {};
     const ai = s.settings.ai = s.settings.ai || {};
     ai.provider = ai.provider || 'none';
@@ -265,8 +276,13 @@
           </form>
         </section>
         <button class="btn primary block" data-action="ob-start">기록 시작하기</button>
+        ${LM.FIREBASE ? `
+          <div class="onboard-restore">
+            <span>다른 기기에서 쓰던 기록이 있나요?</span>
+            <button class="btn small" data-action="sync-login">로그인해서 불러오기</button>
+          </div>` : ''}
         <div class="onboard-restore">
-          <span>예전 기록이 있나요?</span>
+          <span>백업 파일이 있나요?</span>
           <label class="btn small ghost">백업 불러오기<input type="file" accept=".json,application/json" data-change="import" hidden></label>
         </div>
       </div>`;
@@ -1555,6 +1571,7 @@
         <h1>설정</h1>
         <button class="btn small" data-action="settings-close">← ${backLabel} 돌아가기</button>
       </div>
+      ${syncCard()}
       <section class="card">
         <h2 class="card-title">AI 기록관</h2>
         <div class="radio-list">${providers.map(([v, label, desc]) => `
@@ -1627,11 +1644,242 @@
     }
   }
 
+  // ---------- 동기화 ----------
+
+  let renderPending = false;
+  let lastSyncError = null;
+
+  // 다른 기기의 기록을 받아 화면을 새로 그릴 때, 글을 쓰는 중이면 끝날 때까지 미룬다.
+  function safeRender() {
+    const a = document.activeElement;
+    const typing = a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+    if (typing || drag) {
+      renderPending = true;
+      return;
+    }
+    renderPending = false;
+    render();
+  }
+
+  function syncStatusText() {
+    const S = LM.sync;
+    if (S.status === 'syncing') return '다른 기기와 맞추는 중…';
+    if (S.status === 'offline') return '인터넷 연결이 없어 잠시 멈췄어요. 연결되면 다시 맞춰요.';
+    if (S.status === 'error') return S.message || '맞추지 못했어요.';
+    if (S.lastSyncAt) return `마지막으로 맞춘 시각: ${fmtTime(new Date(S.lastSyncAt).toISOString())}`;
+    return '로그인되어 있어요.';
+  }
+
+  const syncHooks = {
+    getState: () => state,
+    isBusy: () => busy || !!drag,
+    apply(next) {
+      const keepAi = state && state.settings.ai;
+      state = migrate(next);
+      if (keepAi) state.settings.ai = keepAi;
+      recompute();
+      LM.db.save(state).catch(handleError);
+      LM.syncSnap(state);
+      safeRender();
+    },
+    onStatus(S) {
+      const el = document.getElementById('sync-status');
+      if (el) {
+        el.textContent = syncStatusText();
+        el.className = `hint${S.status === 'error' ? ' error' : ''}`;
+      }
+      if (S.status === 'error' && S.message !== lastSyncError) {
+        lastSyncError = S.message;
+        toast(`동기화 문제: ${S.message}`);
+      }
+      if (S.status === 'ok') lastSyncError = null;
+    },
+  };
+
+  function syncCard() {
+    if (!LM.FIREBASE) return '';
+    if (!LM.sync.loggedIn()) {
+      return `
+        <section class="card">
+          <h2 class="card-title">PC·휴대폰 동기화</h2>
+          <p class="hint" style="margin-top:0">로그인하면 이 기기의 기록이 다른 기기와 자동으로 맞춰져요. 기록은 이 기기에서 비밀번호로 잠근 뒤에만 올라가서, 보관소에서는 아무도 내용을 읽을 수 없어요.</p>
+          <div class="row-actions"><button class="btn primary" data-action="sync-login">로그인</button></div>
+        </section>`;
+    }
+    return `
+      <section class="card">
+        <h2 class="card-title">PC·휴대폰 동기화</h2>
+        <p style="margin:0">${esc(LM.sync.email())} 계정으로 로그인됨</p>
+        <p class="hint${LM.sync.status === 'error' ? ' error' : ''}" id="sync-status">${esc(syncStatusText())}</p>
+        <div class="row-actions">
+          <button class="btn" data-action="sync-now">지금 맞추기</button>
+          <button class="btn ghost" data-action="sync-logout">로그아웃</button>
+        </div>
+        <p class="hint">일기와 기록은 잠긴 채로 보관돼요. API 키는 기기마다 따로 넣어요.</p>
+      </section>`;
+  }
+
+  const loginModal = () => ask(`
+    <form data-submit="modal-ok">
+      <h2>동기화 로그인</h2>
+      <p class="hint" style="margin-top:0">Firebase에 만들어 둔 계정의 이메일과 비밀번호를 넣어 주세요.</p>
+      <label class="field"><span>이메일</span><input id="sync-email" type="email" autocomplete="username" inputmode="email"></label>
+      <label class="field"><span>비밀번호</span><input id="sync-password" type="password" autocomplete="current-password"></label>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="close-modal">취소</button>
+        <button class="btn primary">로그인</button>
+      </div>
+    </form>`, () => ({
+    email: document.getElementById('sync-email').value.trim(),
+    password: document.getElementById('sync-password').value,
+  }));
+
+  // 비밀번호를 바꾼 뒤 로그인하면, 처음 동기화할 때 쓴 비밀번호로 기록 잠금을 연다.
+  async function unlockFlow(message) {
+    const old = await ask(`
+      <form data-submit="modal-ok">
+        <h2>기록 잠금 열기</h2>
+        <p>${esc(message)}</p>
+        <label class="field"><span>처음 동기화할 때 쓴 비밀번호</span><input id="old-password" type="password" autocomplete="off"></label>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-action="close-modal">취소</button>
+          <button class="btn primary">열기</button>
+        </div>
+      </form>`, () => document.getElementById('old-password').value);
+    if (!old) {
+      await LM.sync.logout();
+      return null;
+    }
+    openModal(loadingHtml('기록 잠금을 여는 중…'), { locked: true });
+    try {
+      return await LM.sync.unlock(old);
+    } catch (err) {
+      closeModal();
+      toast(err.message);
+      return unlockFlow(message);
+    }
+  }
+
+  async function loginFlow() {
+    const cred = await loginModal();
+    if (!cred) return;
+    if (!cred.email || !cred.password) {
+      toast('이메일과 비밀번호를 모두 넣어 주세요.');
+      return;
+    }
+    openModal(loadingHtml('로그인하는 중…'), { locked: true });
+    let result;
+    try {
+      result = await LM.sync.login(cred.email, cred.password);
+    } catch (err) {
+      closeModal();
+      if (err.kind === 'crypto-mismatch') {
+        result = await unlockFlow(err.message);
+        if (!result) return;
+      } else {
+        await LM.sync.logout();
+        toast(err.message || String(err));
+        return;
+      }
+    }
+    try {
+      await linkAfterLogin(result.cloudHas);
+    } catch (err) {
+      console.error(err);
+      closeModal();
+      toast(err.message || String(err));
+    }
+  }
+
+  // 로그인 직후: 이 기기와 클라우드에 기록이 있는지에 따라 불러오기·올리기·합치기를 정한다.
+  async function linkAfterLogin(cloudHas) {
+    if (!state) {
+      if (!cloudHas) {
+        closeModal();
+        render();
+        toast('클라우드에 아직 기록이 없어요. 여기서 새로 시작하면 그 기록이 올라가요.');
+        return;
+      }
+      openModal(loadingHtml('클라우드 기록을 불러오는 중…'), { locked: true });
+      state = migrate(LM.assembleState(await LM.sync.pullAll()));
+      onboardDraft = null;
+      await saveSynced();
+      LM.db.requestPersist();
+      closeModal();
+      goHome();
+      render();
+      toast(`${state.character.name}의 기록을 불러왔어요.`);
+      return;
+    }
+
+    if (!cloudHas) {
+      openModal(loadingHtml('이 기기의 기록을 올리는 중…'), { locked: true });
+      await LM.sync.syncNow();
+      closeModal();
+      render();
+      toast('이 기기의 기록을 올렸어요. 다른 기기에서 로그인하면 이어서 쓸 수 있어요.');
+      return;
+    }
+
+    openModal(loadingHtml('클라우드 기록을 불러오는 중…'), { locked: true });
+    const cloud = migrate(LM.assembleState(await LM.sync.pullAll()));
+    cloud.settings.ai = state.settings.ai;
+    const localHas = state.entries.length > 0 || state.gacha.pulls.length > 0;
+    if (!localHas) {
+      state = cloud;
+      await saveSynced();
+      closeModal();
+      render();
+      toast(`${state.character.name}의 기록을 불러왔어요.`);
+      return;
+    }
+
+    closeModal();
+    const choice = await ask(`
+      <h2>기록을 어떻게 할까요?</h2>
+      <p>이 기기(${esc(state.character.name)}, 일지 ${state.entries.length}개)와 클라우드(${esc(cloud.character.name)}, 일지 ${cloud.entries.length}개)에 각각 기록이 있어요.</p>
+      <div class="choice-list">
+        <button class="choice" data-action="modal-choice" data-value="merge">
+          <b>합치기 (추천)</b>
+          <small>같은 사람의 기록이니 하나로 합쳐요. 일지·훈장·아이템은 모두 남기고, 이름이 같은 스탯·스킬은 하나로 묶어요.</small>
+        </button>
+        <button class="choice" data-action="modal-choice" data-value="cloud">
+          <b>클라우드 기록으로 바꾸기</b>
+          <small>이 기기 기록은 백업 파일로 내려받아 두고, 클라우드 기록만 써요.</small>
+        </button>
+      </div>
+      <div class="modal-actions"><button class="btn ghost" data-action="close-modal">취소 (로그아웃)</button></div>`);
+    if (!choice) {
+      await LM.sync.logout();
+      render();
+      toast('로그인을 취소했어요.');
+      return;
+    }
+    if (choice === 'cloud') {
+      downloadBackup(state);
+      state = cloud;
+      await saveSynced();
+      render();
+      toast('클라우드 기록으로 바꿨어요. 이 기기 기록은 백업 파일로 내려받았어요.');
+      return;
+    }
+    const keepAi = state.settings.ai;
+    state = migrate(LM.firstLinkMerge(state, cloud));
+    state.settings.ai = keepAi;
+    await commit();
+    openModal(loadingHtml('합친 기록을 올리는 중…'), { locked: true });
+    await LM.sync.syncNow();
+    closeModal();
+    render();
+    toast('두 기록을 합쳤어요.');
+  }
+
   // ---------- 백업 ----------
 
-  function exportBackup() {
+  // 백업 파일 내려받기만 한다. (API 키는 넣지 않는다.)
+  function downloadBackup(s) {
     const now = new Date();
-    const copy = JSON.parse(JSON.stringify(state));
+    const copy = JSON.parse(JSON.stringify(s));
     copy.settings.ai.keys = { gemini: '', claude: '' };
     copy.settings.lastBackupAt = now.toISOString();
     const payload = { app: 'life-maker', format: 1, exportedAt: now.toISOString(), state: copy };
@@ -1644,8 +1892,11 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return now.toISOString();
+  }
 
-    state.settings.lastBackupAt = now.toISOString();
+  function exportBackup() {
+    state.settings.lastBackupAt = downloadBackup(state);
     commit().then(render);
     toast('백업 파일을 저장했어요.');
   }
@@ -1666,16 +1917,21 @@
       toast('인생 메이커 백업 파일이 아니에요.');
       return;
     }
+    const syncing = LM.sync.loggedIn() && state;
     if (state) {
+      const saved = `${payload.exportedAt ? `${fmtDay(payload.exportedAt)} 저장, ` : ''}일지 ${s.entries.length}개`;
       const ok = await confirmModal({
         title: '백업을 불러올까요?',
-        body: `지금 이 기기의 기록이 백업 파일(${payload.exportedAt ? `${fmtDay(payload.exportedAt)} 저장, ` : ''}일지 ${s.entries.length}개)의 내용으로 바뀌어요.`,
-        okLabel: '불러오기',
+        body: syncing
+          ? `동기화 중이라 지금 기록에 백업 파일(${saved})의 기록을 합쳐요. 이름이 같은 스탯·스킬은 하나로 묶어요.`
+          : `지금 이 기기의 기록이 백업 파일(${saved})의 내용으로 바뀌어요.`,
+        okLabel: syncing ? '합치기' : '불러오기',
       });
       if (!ok) return;
     }
     const keepAi = state ? state.settings.ai : null;
-    state = migrate(s);
+    // 동기화 중에 통째로 바꾸면 다른 기기 기록과 엉키므로, 지금 기록에 합친다.
+    state = syncing ? migrate(LM.firstLinkMerge(migrate(s), state)) : migrate(s);
     if (keepAi) state.settings.ai = keepAi;
     onboardDraft = null;
     await commit();
@@ -1947,6 +2203,7 @@
           if (q) LM.stepQuest(q, -qp.amount, 'undo', id);
         }
         state.entries = state.entries.filter((e) => e.id !== id);
+        LM.tomb(state, 'entries', id);
         await commit();
         render();
         toast('기록을 지웠어요.');
@@ -1993,6 +2250,7 @@
         });
         if (!ok) return;
         state.stats = state.stats.filter((s) => s.id !== id);
+        LM.tomb(state, 'stats', id);
         await commit();
         render();
         break;
@@ -2006,6 +2264,7 @@
         });
         if (!ok) return;
         state.skills = state.skills.filter((s) => s.id !== id);
+        LM.tomb(state, 'skills', id);
         await commit();
         render();
         break;
@@ -2021,22 +2280,58 @@
         exportBackup();
         break;
       case 'reset': {
+        const syncing = LM.sync.loggedIn();
         const ok = await confirmModal({
           title: '모든 데이터를 지울까요?',
-          body: '캐릭터와 모든 일기가 지워지고 되돌릴 수 없어요. 먼저 백업 파일을 저장해 두는 걸 권해요.',
+          body: syncing
+            ? '이 기기의 캐릭터와 일기가 지워지고 동기화에서도 로그아웃돼요. 클라우드 기록은 그대로 남아 있어서, 다시 로그인하면 불러올 수 있어요.'
+            : '캐릭터와 모든 일기가 지워지고 되돌릴 수 없어요. 먼저 백업 파일을 저장해 두는 걸 권해요.',
           okLabel: '모두 지우기',
           danger: true,
         });
         if (!ok) return;
+        if (syncing) await LM.sync.logout();
         await LM.db.clear();
         state = null;
         progress = null;
+        LM.syncSnap(null);
         onboardDraft = freshDraft();
         draftText = '';
         saveDraft('');
         goHome();
         render();
-        toast('모든 데이터를 지웠어요.');
+        toast(syncing ? '이 기기의 기록을 지웠어요. 클라우드 기록은 그대로 있어요.' : '모든 데이터를 지웠어요.');
+        break;
+      }
+
+      case 'sync-login':
+        await loginFlow();
+        break;
+      case 'sync-now':
+        try {
+          await LM.sync.syncNow();
+          toast('다른 기기와 맞췄어요.');
+        } catch (err) {
+          toast(err.message);
+        }
+        break;
+      case 'sync-logout': {
+        const ok = await confirmModal({
+          title: '동기화에서 로그아웃할까요?',
+          body: '이 기기의 기록은 그대로 남고, 다른 기기와 자동으로 맞추는 것만 멈춰요.',
+          okLabel: '로그아웃',
+        });
+        if (!ok) return;
+        await LM.sync.logout();
+        render();
+        toast('로그아웃했어요.');
+        break;
+      }
+      case 'modal-choice': {
+        const p = pending;
+        pending = null;
+        closeModal();
+        if (p) p.resolve(el.dataset.value);
         break;
       }
       default:
@@ -2165,9 +2460,20 @@
     setTab((ev.state && ev.state.tab) || tabFromHash() || 'today', true);
   });
 
-  // 앱을 켜 둔 채로 하루가 바뀌면 화면의 날짜를 새로 그린다.
+  // 다른 기기에서 바꾼 기록을 받아 온다. (너무 자주는 하지 않는다)
+  function syncSoon() {
+    if (LM.sync.loggedIn() && state && Date.now() - (LM.sync.lastSyncAt || 0) > 15000) LM.sync.syncNow().catch(() => {});
+  }
+
+  // 앱을 켜 둔 채로 하루가 바뀌면 화면의 날짜를 새로 그리고, 다른 기기의 기록도 받아 온다.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state && !$modal.innerHTML) render();
+    if (document.visibilityState !== 'visible' || !state) return;
+    if (!$modal.innerHTML) safeRender();
+    syncSoon();
+  });
+  window.addEventListener('online', syncSoon);
+  document.addEventListener('focusout', () => {
+    if (renderPending) setTimeout(() => { if (renderPending) safeRender(); }, 0);
   });
 
   function handleError(err) {
@@ -2191,8 +2497,14 @@
     } else {
       onboardDraft = freshDraft();
     }
+    LM.syncSnap(state);
     draftText = loadDraft();
     render();
+    await LM.sync.init(syncHooks);
+    if (LM.sync.loggedIn()) {
+      safeRender();
+      if (state) LM.sync.syncNow().catch(() => {});
+    }
   }
 
   init();

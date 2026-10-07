@@ -6,8 +6,7 @@ window.LM = window.LM || {};
 (function (LM) {
   const DB_NAME = 'life-maker';
   const STORE = 'kv';
-  const KEY = 'state';
-  const LS_KEY = 'life-maker-state';
+  const KEY = 'state'; // localStorage에서는 'life-maker-state'
 
   let backend = null; // 'idb' | 'ls'
   let dbPromise = null;
@@ -45,30 +44,31 @@ window.LM = window.LM || {};
     return backend;
   }
 
+  // 키 하나에 값 하나를 저장한다. 게임 기록은 'state', 동기화 정보는 'sync'.
+  async function loadKey(key) {
+    if ((await pickBackend()) === 'idb') {
+      return (await idb('readonly', (s) => s.get(key))) || null;
+    }
+    const raw = localStorage.getItem(`life-maker-${key}`);
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  async function saveKey(key, value) {
+    if ((await pickBackend()) === 'idb') {
+      await idb('readwrite', (s) => (value == null ? s.delete(key) : s.put(value, key)));
+    } else if (value == null) {
+      localStorage.removeItem(`life-maker-${key}`);
+    } else {
+      localStorage.setItem(`life-maker-${key}`, JSON.stringify(value));
+    }
+  }
+
   LM.db = {
-    async load() {
-      if ((await pickBackend()) === 'idb') {
-        return (await idb('readonly', (s) => s.get(KEY))) || null;
-      }
-      const raw = localStorage.getItem(LS_KEY);
-      return raw ? JSON.parse(raw) : null;
-    },
-
-    async save(state) {
-      if ((await pickBackend()) === 'idb') {
-        await idb('readwrite', (s) => s.put(state, KEY));
-      } else {
-        localStorage.setItem(LS_KEY, JSON.stringify(state));
-      }
-    },
-
-    async clear() {
-      if ((await pickBackend()) === 'idb') {
-        await idb('readwrite', (s) => s.delete(KEY));
-      } else {
-        localStorage.removeItem(LS_KEY);
-      }
-    },
+    loadKey,
+    saveKey,
+    load: () => loadKey(KEY),
+    save: (state) => saveKey(KEY, state),
+    clear: () => saveKey(KEY, null),
 
     // 브라우저가 공간이 부족할 때 데이터를 임의로 지우지 않도록 요청한다.
     async requestPersist() {
