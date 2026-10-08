@@ -157,17 +157,32 @@ window.LM = window.LM || {};
 
   // ---------- 지갑 (사탕·가진 포켓몬) ----------
 
+  // owned[id] = { count: 지금 가진 수, firstAt: 처음 만난 때 }
+  // 진화하면 원래 포켓몬이 1마리 줄지만, 한 번 만난 포켓몬은 0마리가 돼도 도감(owned)에 남는다.
   LM.pkWallet = (state) => {
     let candy = 0;
     const owned = {};
-    const own = (id, at) => {
+    const add = (id, at) => {
       const o = owned[id] || (owned[id] = { count: 0, firstAt: at });
       o.count += 1;
     };
-    state.gacha.pulls.forEach((p) => { if (LM.isPk(p.itemId)) { candy += p.candy || 0; own(LM.pkNum(p.itemId), p.at); } });
-    state.gacha.exchanges.forEach((x) => { if (LM.isPk(x.itemId)) { candy -= x.cost; own(LM.pkNum(x.itemId), x.at); } });
-    (state.gacha.evolutions || []).forEach((e) => { candy -= e.cost; own(e.to, e.at); });
-    return { candy, owned, kinds: Object.keys(owned).length };
+    const take = (id) => { if (owned[id] && owned[id].count > 0) owned[id].count -= 1; };
+
+    // 뽑기·데려오기·진화를 일어난 순서대로 반영한다.
+    const events = [];
+    state.gacha.pulls.forEach((p) => {
+      if (LM.isPk(p.itemId)) events.push([p.at, () => { candy += p.candy || 0; add(LM.pkNum(p.itemId), p.at); }]);
+    });
+    state.gacha.exchanges.forEach((x) => {
+      if (LM.isPk(x.itemId)) events.push([x.at, () => { candy -= x.cost; add(LM.pkNum(x.itemId), x.at); }]);
+    });
+    (state.gacha.evolutions || []).forEach((e) => {
+      events.push([e.at, () => { candy -= e.cost; take(e.from); add(e.to, e.at); }]);
+    });
+    events.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).forEach(([, run]) => run());
+
+    const has = (id) => !!owned[id] && owned[id].count > 0;
+    return { candy, owned, has, kinds: Object.keys(owned).length };
   };
 
   // ---------- 뽑기·교환·진화 ----------
@@ -188,8 +203,7 @@ window.LM = window.LM || {};
     if (!dex) return null;
     const cost = times === 10 ? LM.GACHA_TEN_COST : LM.GACHA_COST * times;
     if (LM.wallet(state).points < cost) return null;
-    const counts = {};
-    Object.entries(LM.pkWallet(state).owned).forEach(([id, o]) => { counts[id] = o.count; });
+    const seen = new Set(Object.keys(LM.pkWallet(state).owned).map(Number)); // 도감에 이미 있으면 '겹침'
     const now = new Date().toISOString();
     const batch = LM.uid();
     let gotBetter = false;
@@ -200,8 +214,8 @@ window.LM = window.LM || {};
       if (tier !== 'common') gotBetter = true;
       const pool = dex.filter((p) => p.tier === tier);
       const picked = pool[Math.floor(Math.random() * pool.length)];
-      const dup = (counts[picked.id] || 0) > 0;
-      counts[picked.id] = (counts[picked.id] || 0) + 1;
+      const dup = seen.has(picked.id);
+      seen.add(picked.id);
       results.push({
         id: LM.uid(), at: now, batch, itemId: LM.pkKey(picked.id), rarity: tier, cost: cost / times, dup,
         candy: LM.PK_CANDY_PER_PULL + (dup ? LM.PK_RARITIES[tier].dupCandy : 0),
@@ -211,27 +225,32 @@ window.LM = window.LM || {};
     return results;
   };
 
-  // 사탕으로 아직 없는 포켓몬 데려오기
+  // 사탕으로 지금 없는 포켓몬 데려오기 (진화시켜서 0마리가 된 포켓몬도 다시 데려올 수 있다)
   LM.exchangePokemon = (state, id) => {
     const p = LM.pk(id);
     const w = LM.pkWallet(state);
-    if (!p || w.owned[id]) return false;
+    if (!p || w.has(id)) return false;
     const price = LM.PK_RARITIES[p.tier].price;
     if (w.candy < price) return false;
     state.gacha.exchanges.push({ id: LM.uid(), at: new Date().toISOString(), itemId: LM.pkKey(id), cost: price });
     return true;
   };
 
-  // 가진 포켓몬을 진화시킨다. 원래 포켓몬은 남고, 다음 모습이 도감에 더해진다.
+  // 가진 포켓몬 1마리를 진화시킨다. 원래 포켓몬은 1마리 줄고 진화한 모습이 1마리 늘어난다.
+  // 방에 놓아 둔 포켓몬이 남는 수보다 많아지면, 방에 있던 아이가 그 자리에서 진화한 모습으로 바뀐다.
   LM.evolveCost = (toId) => { const p = LM.pk(toId); return p ? LM.PK_EVOLVE_COST[p.tier] : null; };
   LM.evolvePokemon = (state, fromId, toId) => {
+    fromId = Number(fromId);
+    toId = Number(toId);
     const from = LM.pk(fromId);
     const w = LM.pkWallet(state);
-    if (!from || !from.children.includes(Number(toId)) || !w.owned[fromId] || w.owned[toId]) return false;
+    if (!from || !from.children.includes(toId) || !w.has(fromId)) return false;
     const cost = LM.evolveCost(toId);
     if (w.candy < cost) return false;
     state.gacha.evolutions = state.gacha.evolutions || [];
-    state.gacha.evolutions.push({ id: LM.uid(), at: new Date().toISOString(), from: Number(fromId), to: Number(toId), cost });
+    state.gacha.evolutions.push({ id: LM.uid(), at: new Date().toISOString(), from: fromId, to: toId, cost });
+    const placed = state.room.items.filter((r) => r.kind === 'pokemon' && Number(r.ref) === fromId);
+    if (placed.length > w.owned[fromId].count - 1) placed[placed.length - 1].ref = toId;
     return true;
   };
 })(window.LM);

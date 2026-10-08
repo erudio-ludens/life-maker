@@ -1241,7 +1241,7 @@
           <img src="${LM.pkArt(p.id)}" alt="" loading="lazy" decoding="async">
           <span class="pk-no">${LM.pkNo(p.id)}</span>
           <span class="item-name">${o ? esc(p.name) : '???'}</span>
-          ${o && o.count > 1 ? `<span class="item-count">×${o.count}</span>` : ''}
+          ${o && o.count !== 1 ? `<span class="item-count ${o.count ? '' : 'zero'}">×${o.count}</span>` : ''}
         </button>`;
     }).join('');
     return `
@@ -1260,17 +1260,18 @@
   function showPokemon(id) {
     const p = LM.pk(id);
     if (!p) return;
-    const o = pkw.owned[id];
+    const o = pkw.owned[id]; // 도감에 있는지 (한 번이라도 만났는지)
+    const n = o ? o.count : 0; // 지금 가진 수
     const r = LM.PK_RARITIES[p.tier];
     const actions = [];
-    if (!o) {
-      actions.push(`<button class="btn primary" data-action="pk-exchange" data-id="${id}">사탕 ${r.price}개로 데려오기</button>`);
+    if (!n) {
+      actions.push(`<button class="btn primary" data-action="pk-exchange" data-id="${id}">사탕 ${r.price}개로 ${o ? '다시 ' : ''}데려오기</button>`);
     } else {
-      p.children.filter((c) => !pkw.owned[c]).forEach((c) => {
+      p.children.forEach((c) => {
         const cp = LM.pk(c);
         actions.push(`<button class="btn" data-action="pk-evolve" data-from="${id}" data-to="${c}">${esc(cp.name)}${roJosa(cp.name)} 진화 · 사탕 ${LM.evolveCost(c)}</button>`);
       });
-      if (o.count - LM.pkPlacedCount(state, id) > 0) {
+      if (n - LM.pkPlacedCount(state, id) > 0) {
         actions.push(`<button class="btn primary" data-action="room-place" data-kind="pokemon" data-ref="${id}">방에 놓기</button>`);
       }
     }
@@ -1286,7 +1287,7 @@
         <p class="hint" style="margin:0">${LM.pkNo(id)}</p>
         <h2>${esc(p.name)}</h2>
         <p class="hint"><span class="rarity-pill r-${p.tier}">${r.label}</span> ${p.types.map((t) => LM.PK_TYPES[t] || t).join(' · ')}</p>
-        <p class="hint">${o ? `${fmtDay(o.firstAt)}에 처음 만남 · ${o.count}마리` : `아직 못 만났어요 · 보유 사탕 ${pkw.candy}개`}</p>
+        <p class="hint">${o ? `${fmtDay(o.firstAt)}에 처음 만남 · 지금 ${n}마리` : '아직 못 만났어요'} · 사탕 ${pkw.candy}개</p>
         ${line.length > 1 ? `<p class="hint">진화: ${line.join(' → ')}</p>` : ''}
       </div>
       <div class="modal-actions">
@@ -1361,9 +1362,10 @@
       return h ? { inner: LM.medalSvg(h, 40), label: `${h.title} 훈장`, cls: 'ri-medal' } : null;
     }
     if (r.kind === 'pokemon') {
-      if (!pkw.owned[r.ref]) return null;
+      if (!pkw.has(r.ref)) return null;
       const p = LM.pk(r.ref);
-      return { inner: `<img class="pk-pixel" src="${LM.pkPixel(r.ref)}" alt="">`, label: p ? p.name : LM.pkNo(r.ref), cls: 'ri-pet ri-pokemon' };
+      // 포켓몬은 도트 그림 자체가 움직이므로 반려동물처럼 좌우로 돌아다니게 하지 않는다.
+      return { inner: `<img class="pk-pixel" src="${LM.pkPixel(r.ref)}" alt="">`, label: p ? p.name : LM.pkNo(r.ref), cls: 'ri-pokemon' };
     }
     const av = avatarItem();
     return av ? { inner: av.emoji, label: state.character.name, cls: 'ri-avatar' } : null;
@@ -1411,8 +1413,8 @@
         }).join('')}</div>`
         : '<p class="hint">아직 놓을 물건이 없어요. 퀘스트 탭의 뽑기에서 가구·소품·반려동물을 얻을 수 있어요.</p>';
     } else if (roomDrawer === 'pokemon') {
-      const ids = Object.keys(pkw.owned).map(Number).sort((a, b) => a - b);
-      drawer = `<div class="drawer-grid">${ids.map((id) => {
+      const ids = Object.keys(pkw.owned).map(Number).filter((id) => pkw.has(id)).sort((a, b) => a - b);
+      drawer = !ids.length ? '<p class="hint">지금 가진 포켓몬이 없어요.</p>' : `<div class="drawer-grid">${ids.map((id) => {
         const p = LM.pk(id);
         const left = pkw.owned[id].count - LM.pkPlacedCount(state, id);
         return `
@@ -1462,7 +1464,16 @@
 
   function roomHtml() {
     const t = LM.ROOM_THEMES[state.room.theme];
-    const items = state.room.items.map(roomItemHtml).join('');
+    // 진화 등으로 가진 수보다 많이 놓여 있는 포켓몬은 가진 수만큼만 보여 준다.
+    const shown = {};
+    const items = state.room.items.map((r) => {
+      if (r.kind === 'pokemon') {
+        const k = Number(r.ref);
+        shown[k] = (shown[k] || 0) + 1;
+        if (shown[k] > (pkw.owned[k] ? pkw.owned[k].count : 0)) return '';
+      }
+      return roomItemHtml(r);
+    }).join('');
     const placed = state.room.items.filter((r) => r.kind !== 'avatar' && roomEntity(r)).length;
     return `
       <section class="room-wrap">
@@ -2340,7 +2351,13 @@
           toast(`사탕이 ${cost - pkw.candy}개 모자라요.`);
           return;
         }
-        if (!LM.evolvePokemon(state, from.id, to.id)) return;
+        const left = pkw.owned[from.id].count - 1;
+        const ok = await confirmModal({
+          title: `${from.name} 진화`,
+          body: `사탕 ${cost}개를 써서 ${from.name} 1마리를 ${to.name}${roJosa(to.name)} 진화시킬까요? ${from.name}${josa(from.name, '은', '는')} ${left}마리가 남아요.${left ? '' : ' (도감 기록은 그대로 남아요)'}`,
+          okLabel: '진화시키기',
+        });
+        if (!ok || !LM.evolvePokemon(state, from.id, to.id)) return;
         await commit();
         render();
         showPokemon(to.id);

@@ -866,6 +866,7 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 
 .pk-tile img { width: 100%; max-width: 72px; aspect-ratio: 1; object-fit: contain; }
 .pk-no { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.item-count.zero { color: var(--text-3); font-weight: 600; }
 .pk-art { width: 64px; height: 64px; object-fit: contain; }
 .gacha-results.one .pk-art { width: 140px; height: 140px; }
 .pk-big { width: 160px; height: 160px; object-fit: contain; }
