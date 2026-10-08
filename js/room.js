@@ -34,6 +34,7 @@ window.LM = window.LM || {};
   LM.placeableItem = (it) => !!it && it.category !== 'avatar';
 
   LM.placedCount = (state, itemId) => state.room.items.filter((r) => r.kind === 'item' && r.ref === itemId).length;
+  LM.pkPlacedCount = (state, pkId) => state.room.items.filter((r) => r.kind === 'pokemon' && Number(r.ref) === Number(pkId)).length;
 
   LM.medalPlaced = (state, entryId) => state.room.items.some((r) => r.kind === 'medal' && r.ref === entryId);
 

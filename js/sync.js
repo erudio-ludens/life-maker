@@ -42,7 +42,7 @@ window.LM = window.LM || {};
     character: (s) => s.character,
     room: (s) => s.room,
     focus: (s) => s.quests.focus,
-    prefs: (s) => s.settings.dayStartHour,
+    prefs: (s) => [s.settings.dayStartHour, s.settings.gachaMode],
   };
   const periodSig = (p) => JSON.stringify([p.active.map((q) => q.id), p.spare.map((q) => q.id), !!p.received]);
   const takeSnap = (s) => ({
@@ -80,7 +80,7 @@ window.LM = window.LM || {};
         quests: s.quests,
         gacha: s.gacha,
         room: s.room,
-        settings: { dayStartHour: s.settings.dayStartHour, lastBackupAt: s.settings.lastBackupAt },
+        settings: { dayStartHour: s.settings.dayStartHour, lastBackupAt: s.settings.lastBackupAt, gachaMode: s.settings.gachaMode },
         stamps: s.stamps || {},
         tombstones: s.tombstones || {},
       },
@@ -177,7 +177,10 @@ window.LM = window.LM || {};
     if (pick('character')) s.character = clone(c.character);
     if (pick('room')) s.room = clone(c.room);
     if (pick('focus')) s.quests.focus = clone(c.quests.focus);
-    if (pick('prefs')) s.settings.dayStartHour = c.settings.dayStartHour;
+    if (pick('prefs')) {
+      s.settings.dayStartHour = c.settings.dayStartHour;
+      if (c.settings.gachaMode) s.settings.gachaMode = c.settings.gachaMode;
+    }
     const backups = [s.settings.lastBackupAt, c.settings && c.settings.lastBackupAt].filter(Boolean).sort();
     s.settings.lastBackupAt = backups.length ? backups[backups.length - 1] : null;
 
@@ -186,6 +189,7 @@ window.LM = window.LM || {};
     s.quests.periods = mergePeriods(s.quests.periods, c.quests && c.quests.periods);
     s.gacha.pulls = mergeOrdered(s.gacha.pulls, c.gacha && c.gacha.pulls);
     s.gacha.exchanges = mergeOrdered(s.gacha.exchanges, c.gacha && c.gacha.exchanges);
+    s.gacha.evolutions = mergeOrdered(s.gacha.evolutions, c.gacha && c.gacha.evolutions);
     if (c.createdAt && c.createdAt < s.createdAt) s.createdAt = c.createdAt;
     s.version = Math.max(s.version || 1, c.version || 1);
     Object.entries(theirs).forEach(([k, t]) => { s.stamps[k] = Math.max(s.stamps[k] || 0, t); });

@@ -13,6 +13,7 @@
   let state = null;
   let progress = null;
   let wallet = null;
+  let pkw = null; // 포켓몬 사탕·도감 (LM.pkWallet)
   let tab = 'today';
   let prevTab = 'today'; // 설정을 닫으면 돌아갈 탭
   let settingsPushed = false; // 설정을 열면서 뒤로 가기 기록을 쌓았는지
@@ -95,6 +96,7 @@
   function recompute() {
     progress = LM.computeProgress(state);
     wallet = LM.wallet(state);
+    pkw = LM.pkWallet(state);
   }
 
   async function commit() {
@@ -139,6 +141,8 @@
     s.gacha = s.gacha || {};
     s.gacha.pulls = s.gacha.pulls || [];
     s.gacha.exchanges = s.gacha.exchanges || [];
+    s.gacha.evolutions = s.gacha.evolutions || [];
+    if (!['items', 'pokemon'].includes(s.settings.gachaMode)) s.settings.gachaMode = 'items';
     s.room = s.room || {};
     s.room.theme = LM.ROOM_THEMES[s.room.theme] ? s.room.theme : 'cream';
     s.room.items = s.room.items || [];
@@ -915,8 +919,8 @@
     return `
       <section class="card wallet-card">
         <div class="wallet-row">
-          <div><span class="hint" style="margin:0">보유 포인트</span><div class="wallet-points">${wallet.points.toLocaleString()}P</div></div>
-          <button class="btn primary" data-action="gacha">뽑기</button>
+          <div><span class="hint" style="margin:0">보유 포인트${pkMode() ? ' · 사탕' : ''}</span><div class="wallet-points">${wallet.points.toLocaleString()}P${pkMode() ? ` · 🍬${pkw.candy}` : ''}</div></div>
+          <button class="btn primary" data-action="gacha">${pkMode() ? '포켓몬 뽑기' : '뽑기'}</button>
         </div>
         <p class="hint">하루 첫 일지 +${LM.DIARY_POINTS}P · ${KINDS.map((k) => `${LM.QUEST_KINDS[k].label} +${LM.QUEST_KINDS[k].reward}P`).join(' · ')}</p>
       </section>
@@ -1096,6 +1100,71 @@
 
   // ---------- 뽑기 ----------
 
+  const pkMode = () => state.settings.gachaMode === 'pokemon';
+
+  // 포켓몬 도감이 필요할 때 불러온다(처음 한 번만 인터넷에서 받고 이후엔 기기에 저장된 것을 쓴다).
+  async function ensureDex() {
+    if (LM.pokedex()) return true;
+    openModal(loadingHtml('포켓몬 도감을 불러오는 중…'), { locked: true });
+    try {
+      await LM.loadPokedex((n) => {
+        const el = $modal.querySelector('.loading p');
+        if (el) el.textContent = `포켓몬 도감을 불러오는 중… ${n}/${LM.PK_MAX}`;
+      });
+      closeModal();
+      return true;
+    } catch (err) {
+      closeModal();
+      toast(err.message);
+      return false;
+    }
+  }
+
+  // 받침에 맞춰 '으로/로'
+  const roJosa = (word) => {
+    const code = word.charCodeAt(word.length - 1) - 0xac00;
+    if (code < 0 || code > 11171) return '(으)로';
+    const batchim = code % 28;
+    return batchim && batchim !== 8 ? '으로' : '로';
+  };
+
+  function pkGachaHtml(results) {
+    const rates = Object.values(LM.PK_RARITIES).map((r) => `${r.label} ${r.weight}%`).join(' · ');
+    const stage = results
+      ? `<div class="gacha-results ${results.length > 1 ? 'many' : 'one'}">${results.map((r, i) => {
+        const id = LM.pkNum(r.itemId);
+        const p = LM.pk(id);
+        return `
+          <div class="gacha-card r-${r.rarity}" style="animation-delay:${(i * 0.12).toFixed(2)}s">
+            <img class="pk-art" src="${LM.pkArt(id)}" alt="">
+            <span class="item-name">${esc(p ? p.name : LM.pkNo(id))}</span>
+            <span class="gacha-tag">${r.dup ? `사탕 +${r.candy}` : 'NEW'}</span>
+          </div>`;
+      }).join('')}</div>`
+      : '<div class="gacha-stage" aria-hidden="true">🎁</div>';
+    return `
+      <div class="modal-head">
+        <h2>포켓몬 뽑기</h2>
+        <p class="hint">보유 포인트 ${wallet.points.toLocaleString()}P · 사탕 ${pkw.candy}개 · 도감 ${pkw.kinds}/${LM.PK_MAX}</p>
+      </div>
+      ${stage}
+      <div class="gacha-buttons">
+        <button class="btn" data-action="pull" data-mode="pokemon" data-times="1">1회 · ${LM.GACHA_COST}P</button>
+        <button class="btn primary" data-action="pull" data-mode="pokemon" data-times="10">10회 · ${LM.GACHA_TEN_COST}P</button>
+      </div>
+      <p class="hint gacha-rates">${rates}<br>10회 뽑기는 고급 이상 1마리 보장 · 뽑을 때마다 사탕 1개, 겹치면 사탕을 더 받아요</p>
+      <div class="modal-actions"><button class="btn ghost" data-action="close-modal">닫기</button></div>`;
+  }
+
+  async function openGacha(mode) {
+    if (mode === 'pokemon') {
+      if (!(await ensureDex())) return;
+      openModal(pkGachaHtml(null));
+    } else {
+      openModal(gachaHtml(null));
+    }
+  }
+
   function gachaHtml(results) {
     const left = LM.GACHA_PITY - wallet.sinceLegend;
     const rates = Object.values(LM.RARITIES).map((r) => `${r.label} ${r.weight}%`).join(' · ');
@@ -1124,29 +1193,105 @@
       <div class="modal-actions"><button class="btn ghost" data-action="close-modal">닫기</button></div>`;
   }
 
-  async function doPull(times) {
+  async function doPull(times, mode) {
     const cost = times === 10 ? LM.GACHA_TEN_COST : LM.GACHA_COST;
     if (wallet.points < cost) {
       toast(`포인트가 ${(cost - wallet.points).toLocaleString()}P 모자라요.`);
       return;
     }
-    const results = LM.pull(state, times);
+    if (mode === 'pokemon' && !(await ensureDex())) return;
+    const results = mode === 'pokemon' ? LM.pullPokemon(state, times) : LM.pull(state, times);
     if (!results) return;
     await commit();
     render();
-    openModal(gachaHtml(results));
+    openModal(mode === 'pokemon' ? pkGachaHtml(results) : gachaHtml(results));
   }
 
   // ---------- 보관함 ----------
 
   function viewVault() {
     const ownedCount = LM.ITEMS.filter((it) => wallet.owned[it.id]).length;
+    const showPk = pkMode() || pkw.kinds > 0;
+    if (vaultView === 'pokemon' && !showPk) vaultView = 'items';
+    const seg = (id, label) => `<button role="tab" class="${vaultView === id ? 'on' : ''}" aria-selected="${vaultView === id}" data-action="vault-view" data-view="${id}">${label}</button>`;
+    const views = { honors: viewHonors, items: viewItems, pokemon: viewPokedex };
     return `
-      <div class="segmented" role="tablist">
-        <button role="tab" class="${vaultView === 'honors' ? 'on' : ''}" aria-selected="${vaultView === 'honors'}" data-action="vault-view" data-view="honors">훈장 · 업적</button>
-        <button role="tab" class="${vaultView === 'items' ? 'on' : ''}" aria-selected="${vaultView === 'items'}" data-action="vault-view" data-view="items">아이템 ${ownedCount}/${LM.ITEMS.length}</button>
+      <div class="segmented ${showPk ? 'three' : ''}" role="tablist">
+        ${seg('honors', '훈장 · 업적')}
+        ${seg('items', `아이템 ${ownedCount}/${LM.ITEMS.length}`)}
+        ${showPk ? seg('pokemon', `포켓몬 ${pkw.kinds}/${LM.PK_MAX}`) : ''}
       </div>
-      ${vaultView === 'items' ? viewItems() : viewHonors()}`;
+      ${views[vaultView]()}`;
+  }
+
+  function viewPokedex() {
+    const list = LM.pokedex();
+    if (!list) {
+      LM.loadPokedex().then(safeRender).catch((err) => toast(err.message));
+      return '<p class="empty">포켓몬 도감을 불러오는 중이에요…</p>';
+    }
+    const counts = Object.keys(LM.PK_RARITIES).map((t) => {
+      const all = list.filter((p) => p.tier === t);
+      return `<span class="rarity-pill r-${t}">${LM.PK_RARITIES[t].label} ${all.filter((p) => pkw.owned[p.id]).length}/${all.length}</span>`;
+    }).join(' ');
+    const tiles = list.map((p) => {
+      const o = pkw.owned[p.id];
+      return `
+        <button class="pk-tile r-${p.tier} ${o ? '' : 'locked'}" data-action="pk" data-id="${p.id}" aria-label="${LM.pkNo(p.id)} ${o ? esc(p.name) : '아직 못 만난 포켓몬'}">
+          <img src="${LM.pkArt(p.id)}" alt="" loading="lazy" decoding="async">
+          <span class="pk-no">${LM.pkNo(p.id)}</span>
+          <span class="item-name">${o ? esc(p.name) : '???'}</span>
+          ${o && o.count > 1 ? `<span class="item-count">×${o.count}</span>` : ''}
+        </button>`;
+    }).join('');
+    return `
+      <section class="card">
+        <div class="wallet-row">
+          <div><span class="hint" style="margin:0">보유 포인트 · 사탕</span><div class="wallet-points">${wallet.points.toLocaleString()}P · 🍬${pkw.candy}</div></div>
+          <button class="btn primary" data-action="gacha" data-mode="pokemon">포켓몬 뽑기</button>
+        </div>
+        <p class="hint">겹친 포켓몬은 사탕이 돼요. 사탕으로 가진 포켓몬을 진화시키거나, 아직 없는 포켓몬을 데려올 수 있어요.</p>
+        <div class="pill-row">${counts}</div>
+      </section>
+      <div class="pk-grid">${tiles}</div>
+      <p class="footer-note">포켓몬 이름·그림 출처: PokeAPI<br>포켓몬의 저작권은 Nintendo · Creatures · GAME FREAK · The Pokémon Company에 있어요.</p>`;
+  }
+
+  function showPokemon(id) {
+    const p = LM.pk(id);
+    if (!p) return;
+    const o = pkw.owned[id];
+    const r = LM.PK_RARITIES[p.tier];
+    const actions = [];
+    if (!o) {
+      actions.push(`<button class="btn primary" data-action="pk-exchange" data-id="${id}">사탕 ${r.price}개로 데려오기</button>`);
+    } else {
+      p.children.filter((c) => !pkw.owned[c]).forEach((c) => {
+        const cp = LM.pk(c);
+        actions.push(`<button class="btn" data-action="pk-evolve" data-from="${id}" data-to="${c}">${esc(cp.name)}${roJosa(cp.name)} 진화 · 사탕 ${LM.evolveCost(c)}</button>`);
+      });
+      if (o.count - LM.pkPlacedCount(state, id) > 0) {
+        actions.push(`<button class="btn primary" data-action="room-place" data-kind="pokemon" data-ref="${id}">방에 놓기</button>`);
+      }
+    }
+    // 진화 계열: 이전 모습 → 이 포켓몬 → 다음 모습
+    const name = (x) => (pkw.owned[x] ? esc(LM.pk(x).name) : '???');
+    const line = [];
+    if (p.parent) line.push(name(p.parent));
+    line.push(`<b>${esc(p.name)}</b>`);
+    if (p.children.length) line.push(p.children.map(name).join(' / '));
+    openModal(`
+      <div class="item-detail">
+        <img class="pk-big ${o ? '' : 'locked'}" src="${LM.pkArt(id)}" alt="">
+        <p class="hint" style="margin:0">${LM.pkNo(id)}</p>
+        <h2>${esc(p.name)}</h2>
+        <p class="hint"><span class="rarity-pill r-${p.tier}">${r.label}</span> ${p.types.map((t) => LM.PK_TYPES[t] || t).join(' · ')}</p>
+        <p class="hint">${o ? `${fmtDay(o.firstAt)}에 처음 만남 · ${o.count}마리` : `아직 못 만났어요 · 보유 사탕 ${pkw.candy}개`}</p>
+        ${line.length > 1 ? `<p class="hint">진화: ${line.join(' → ')}</p>` : ''}
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" data-action="close-modal">닫기</button>${actions.join('')}
+      </div>`);
   }
 
   function viewItems() {
@@ -1170,7 +1315,7 @@
       <section class="card">
         <div class="wallet-row">
           <div><span class="hint" style="margin:0">보유 포인트</span><div class="wallet-points">${wallet.points.toLocaleString()}P</div></div>
-          <button class="btn primary" data-action="gacha">뽑기</button>
+          <button class="btn primary" data-action="gacha" data-mode="items">아이템 뽑기</button>
         </div>
         <p class="hint">조각 ${wallet.shards}개 · 겹친 아이템은 조각이 되고, 조각으로 아직 없는 아이템을 교환할 수 있어요.</p>
       </section>
@@ -1215,6 +1360,11 @@
       const h = progress.honors.medals.find((m) => m.entryId === r.ref);
       return h ? { inner: LM.medalSvg(h, 40), label: `${h.title} 훈장`, cls: 'ri-medal' } : null;
     }
+    if (r.kind === 'pokemon') {
+      if (!pkw.owned[r.ref]) return null;
+      const p = LM.pk(r.ref);
+      return { inner: `<img class="pk-pixel" src="${LM.pkPixel(r.ref)}" alt="">`, label: p ? p.name : LM.pkNo(r.ref), cls: 'ri-pet ri-pokemon' };
+    }
     const av = avatarItem();
     return av ? { inner: av.emoji, label: state.character.name, cls: 'ri-avatar' } : null;
   }
@@ -1233,6 +1383,7 @@
   }
 
   function roomEditor() {
+    if (roomDrawer === 'pokemon' && !pkw.kinds) roomDrawer = 'items';
     const sel = roomSel && state.room.items.find((r) => r.id === roomSel);
     const selEnt = sel && roomEntity(sel);
     const tools = selEnt ? `
@@ -1259,6 +1410,18 @@
             </button>`;
         }).join('')}</div>`
         : '<p class="hint">아직 놓을 물건이 없어요. 퀘스트 탭의 뽑기에서 가구·소품·반려동물을 얻을 수 있어요.</p>';
+    } else if (roomDrawer === 'pokemon') {
+      const ids = Object.keys(pkw.owned).map(Number).sort((a, b) => a - b);
+      drawer = `<div class="drawer-grid">${ids.map((id) => {
+        const p = LM.pk(id);
+        const left = pkw.owned[id].count - LM.pkPlacedCount(state, id);
+        return `
+          <button class="drawer-tile r-${p ? p.tier : 'common'} ${left > 0 ? '' : 'used'}" data-action="room-add" data-kind="pokemon" data-ref="${id}" aria-label="${esc(p ? p.name : LM.pkNo(id))} 놓기">
+            <img class="pk-mini" src="${LM.pkArt(id)}" alt="" loading="lazy">
+            <span class="item-name">${esc(p ? p.name : LM.pkNo(id))}</span>
+            <span class="drawer-left">${left > 0 ? `${left}마리 남음` : '다 놓음'}</span>
+          </button>`;
+      }).join('')}</div>`;
     } else if (roomDrawer === 'medals') {
       const medals = progress.honors.medals;
       drawer = medals.length
@@ -1287,10 +1450,11 @@
     }
 
     const seg = (id, label) => `<button role="tab" class="${roomDrawer === id ? 'on' : ''}" aria-selected="${roomDrawer === id}" data-action="room-drawer" data-view="${id}">${label}</button>`;
+    const hasPk = pkw.kinds > 0;
     return `
       ${tools}
       <div class="room-drawer card">
-        <div class="segmented three" role="tablist">${seg('items', '물건')}${seg('medals', '훈장')}${seg('theme', '배경')}</div>
+        <div class="segmented ${hasPk ? 'four' : 'three'}" role="tablist">${seg('items', '물건')}${hasPk ? seg('pokemon', '포켓몬') : ''}${seg('medals', '훈장')}${seg('theme', '배경')}</div>
         ${drawer}
         <button class="btn primary block" data-action="room-done">꾸미기 끝내기</button>
       </div>`;
@@ -1305,7 +1469,7 @@
         <div class="room scene-${t.scene} ${t.dark ? 'dark-scene' : ''} ${roomEdit ? 'editing' : ''}" id="room" style="${LM.sceneStyle(t)}">
           <div class="scene" aria-hidden="true">${LM.sceneHtml(t.scene)}</div>
           ${items}
-          ${!items.trim() ? '<p class="room-empty">뽑기에서 얻은 가구와 반려동물을<br>방에 놓아 보세요</p>' : ''}
+          ${!items.trim() ? '<p class="room-empty">뽑기에서 얻은 가구·반려동물·포켓몬을<br>방에 놓아 보세요</p>' : ''}
         </div>
         ${roomEdit ? roomEditor() : `
           <div class="room-bar">
@@ -1315,11 +1479,32 @@
       </section>`;
   }
 
+  // 방의 포켓몬 도트는 원래 크기에 비례해 키운다(작은 포켓몬은 작게, 큰 포켓몬은 크게).
+  function sizePixel(img) {
+    const room = img.closest('.room');
+    const item = img.closest('.room-item');
+    if (!room || !item || !img.naturalHeight) return;
+    const s = parseFloat(item.style.getPropertyValue('--s')) || 1;
+    img.style.height = `${Math.round(img.naturalHeight * (room.clientWidth / 300) * s)}px`;
+  }
+  const sizePixels = () => document.querySelectorAll('.pk-pixel').forEach((img) => { if (img.complete) sizePixel(img); });
+  document.addEventListener('load', (ev) => {
+    if (ev.target.classList && ev.target.classList.contains('pk-pixel')) sizePixel(ev.target);
+  }, true);
+  window.addEventListener('resize', sizePixels);
+
   // 물건을 방에 놓고 꾸미기 모드로 연다.
   async function placeInRoom(kind, ref) {
     if (kind === 'item') {
       const o = wallet.owned[ref];
       if (!o || o.count - LM.placedCount(state, ref) <= 0) {
+        toast('가진 만큼 모두 놓았어요.');
+        return;
+      }
+    } else if (kind === 'pokemon') {
+      ref = Number(ref);
+      const o = pkw.owned[ref];
+      if (!o || o.count - LM.pkPlacedCount(state, ref) <= 0) {
         toast('가진 만큼 모두 놓았어요.');
         return;
       }
@@ -1454,7 +1639,11 @@
       <h3>퀘스트와 뽑기</h3>
       <p>포인트: 하루 첫 일지 +${LM.DIARY_POINTS}P, 퀘스트 ${KINDS.map((k) => `${LM.QUEST_KINDS[k].label} +${LM.QUEST_KINDS[k].reward}P`).join(' / ')}.</p>
       <p>뽑기: 1회 ${LM.GACHA_COST}P, 10회 ${LM.GACHA_TEN_COST}P(고급 이상 1개 보장). ${Object.values(LM.RARITIES).map((r) => `${r.label} ${r.weight}%`).join(' / ')}. ${LM.GACHA_PITY}번째 뽑기까지 전설이 안 나오면 확정이에요.</p>
-      <p>겹친 아이템은 조각이 돼요 (${Object.values(LM.RARITIES).map((r) => `${r.label} ${r.shards}`).join(' / ')}). 조각으로 없는 아이템을 교환할 수 있어요 (${Object.values(LM.RARITIES).map((r) => `${r.label} ${r.price}`).join(' / ')}).</p>`;
+      <p>겹친 아이템은 조각이 돼요 (${Object.values(LM.RARITIES).map((r) => `${r.label} ${r.shards}`).join(' / ')}). 조각으로 없는 아이템을 교환할 수 있어요 (${Object.values(LM.RARITIES).map((r) => `${r.label} ${r.price}`).join(' / ')}).</p>
+      <h3>포켓몬 뽑기 (설정에서 뽑기 종류를 바꾸면)</h3>
+      <p>1~${LM.PK_MAX}번 포켓몬. ${Object.values(LM.PK_RARITIES).map((r) => `${r.label} ${r.weight}%`).join(' / ')}. 천장은 없고, 10회 뽑기는 고급 이상 1마리를 보장해요.</p>
+      <p>등급: 환상(공식 환상 포켓몬) · 전설(공식 전설 포켓몬) · 희귀(최종 진화 중 종족값 500 이상) · 고급(진화한 포켓몬, 진화하지 않는 포켓몬, 원작에서 잡기 어려운 기본형) · 일반(그 밖의 진화 전 포켓몬)</p>
+      <p>사탕: 뽑을 때마다 ${LM.PK_CANDY_PER_PULL}개, 겹치면 더 (${Object.values(LM.PK_RARITIES).map((r) => `${r.label} +${r.dupCandy}`).join(' / ')}). 데려오기 (${Object.values(LM.PK_RARITIES).map((r) => `${r.label} ${r.price}`).join(' / ')}), 진화 (진화한 모습이 ${Object.entries(LM.PK_EVOLVE_COST).slice(0, 3).map(([k, v]) => `${LM.PK_RARITIES[k].label}이면 ${v}`).join(' / ')}).</p>`;
   }
 
   function viewCharacter() {
@@ -1586,6 +1775,20 @@
         <p class="hint">API 키는 이 기기의 브라우저에만 저장되고, 백업 파일에는 들어가지 않아요.</p>
       </section>
       <section class="card">
+        <h2 class="card-title">뽑기 종류</h2>
+        <div class="radio-list">
+          <label class="radio">
+            <input type="radio" name="gacha-mode" value="items" data-change="gacha-mode" ${state.settings.gachaMode === 'items' ? 'checked' : ''}>
+            <span><b>꾸미기 아이템</b><small>가구·소품·반려동물·아바타 ${LM.ITEMS.length}종</small></span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="gacha-mode" value="pokemon" data-change="gacha-mode" ${state.settings.gachaMode === 'pokemon' ? 'checked' : ''}>
+            <span><b>포켓몬 1세대</b><small>1~${LM.PK_MAX}번 포켓몬. 처음 켤 때 PokeAPI에서 이름과 그림을 불러와요(인터넷 필요).</small></span>
+          </label>
+        </div>
+        <p class="hint">포인트는 함께 쓰고, 모은 것은 양쪽 다 남아요. 퀘스트 탭의 뽑기 버튼이 고른 종류로 열려요.</p>
+      </section>
+      <section class="card">
         <h2 class="card-title">하루 기준 시각</h2>
         <label class="field inline"><span>하루가 바뀌는 시각</span>
           <select data-change="day-start">
@@ -1608,7 +1811,7 @@
         <p class="hint" style="margin-top:0">캐릭터와 모든 기록이 지워지고 되돌릴 수 없어요.</p>
         <div class="row-actions"><button class="btn danger" data-action="reset">모두 지우기</button></div>
       </section>
-      <p class="footer-note">인생 메이커 1단계 · 데이터 버전 ${state.version}</p>`;
+      <p class="footer-note">인생 메이커 · 데이터 버전 ${state.version}</p>`;
   }
 
   async function testAi(btn) {
@@ -2023,6 +2226,7 @@
             <button class="tab ${tab === id ? 'on' : ''}" data-action="tab" data-tab="${id}" ${tab === id ? 'aria-current="page"' : ''}>${ICONS[id]}${label}</button>`).join('')}
         </div>
       </nav>`;
+    sizePixels();
   }
 
   // ---------- 이벤트 ----------
@@ -2105,11 +2309,44 @@
         await editFocus();
         break;
       case 'gacha':
-        openModal(gachaHtml(null));
+        await openGacha(el.dataset.mode || state.settings.gachaMode);
         break;
       case 'pull':
-        await doPull(Number(el.dataset.times));
+        await doPull(Number(el.dataset.times), el.dataset.mode || 'items');
         break;
+      case 'pk':
+        showPokemon(Number(el.dataset.id));
+        break;
+      case 'pk-exchange': {
+        const p = LM.pk(id);
+        const price = LM.PK_RARITIES[p.tier].price;
+        if (pkw.candy < price) {
+          toast(`사탕이 ${price - pkw.candy}개 모자라요.`);
+          return;
+        }
+        const ok = await confirmModal({ title: `${p.name} 데려오기`, body: `사탕 ${price}개를 써서 ${p.name}${josa(p.name, '을', '를')} 데려올까요?`, okLabel: '데려오기' });
+        if (!ok || !LM.exchangePokemon(state, p.id)) return;
+        await commit();
+        render();
+        showPokemon(p.id);
+        toast(`${p.name}${josa(p.name, '이', '가')} 도감에 등록됐어요.`);
+        break;
+      }
+      case 'pk-evolve': {
+        const from = LM.pk(el.dataset.from);
+        const to = LM.pk(el.dataset.to);
+        const cost = LM.evolveCost(to.id);
+        if (pkw.candy < cost) {
+          toast(`사탕이 ${cost - pkw.candy}개 모자라요.`);
+          return;
+        }
+        if (!LM.evolvePokemon(state, from.id, to.id)) return;
+        await commit();
+        render();
+        showPokemon(to.id);
+        toast(`${from.name}${josa(from.name, '이', '가')} ${to.name}${roJosa(to.name)} 진화했어요!`);
+        break;
+      }
       case 'vault-view':
         vaultView = el.dataset.view;
         render();
@@ -2414,6 +2651,17 @@
         await commit();
         render();
         break;
+      case 'gacha-mode': {
+        if (el.value === 'pokemon' && !(await ensureDex())) {
+          render(); // 불러오지 못했으면 원래 선택으로 되돌린다
+          return;
+        }
+        state.settings.gachaMode = el.value;
+        await commit();
+        render();
+        toast(el.value === 'pokemon' ? '이제 포켓몬을 뽑아요. 보관함에 포켓몬 도감이 생겼어요.' : '이제 꾸미기 아이템을 뽑아요.');
+        break;
+      }
       case 'import':
         await importBackup(el);
         break;
@@ -2521,6 +2769,8 @@
     LM.syncSnap(state);
     draftText = loadDraft();
     render();
+    // 포켓몬을 쓰는 중이면 도감을 미리 불러 둔다(기기에 저장돼 있으면 바로 끝난다).
+    if (state && (pkMode() || pkw.kinds > 0)) LM.loadPokedex().then(safeRender).catch(() => {});
     await LM.sync.init(syncHooks);
     if (LM.sync.loggedIn()) {
       safeRender();

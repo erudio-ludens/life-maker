@@ -90,6 +90,7 @@ window.LM = window.LM || {};
     item('astronaut', '🧑‍🚀', '우주비행사', 'avatar', 'legendary'),
   ];
   LM.itemById = (id) => LM.ITEMS.find((it) => it.id === id) || null;
+  LM.isPk = (itemId) => typeof itemId === 'string' && itemId.startsWith('pk:'); // 포켓몬 뽑기 기록인지
 
   // 지갑: 번 포인트(일지·퀘스트) − 쓴 포인트(뽑기), 조각, 가진 아이템, 전설 천장까지 남은 수
   LM.wallet = (state) => {
@@ -109,12 +110,14 @@ window.LM = window.LM || {};
       o.count += 1;
     };
     for (const pull of state.gacha.pulls) {
-      spent += pull.cost;
+      spent += pull.cost; // 포인트는 꾸미기·포켓몬 뽑기가 함께 쓴다
+      if (LM.isPk(pull.itemId)) continue; // 포켓몬의 사탕·도감은 LM.pkWallet에서 따로 센다
       shards += pull.shards || 0;
       own(pull.itemId, pull.at);
       sinceLegend = pull.rarity === 'legendary' ? 0 : sinceLegend + 1;
     }
     for (const ex of state.gacha.exchanges) {
+      if (LM.isPk(ex.itemId)) continue;
       shards -= ex.cost;
       own(ex.itemId, ex.at);
     }

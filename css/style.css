@@ -24,6 +24,7 @@
   --r-uncommon: #2f8a5a;
   --r-rare: #7a52c7;
   --r-legendary: #b7791f;
+  --r-mythical: #c2418f;
   --silhouette: brightness(0);
   --radius: 14px;
   --font: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
@@ -58,6 +59,7 @@
     --r-uncommon: #6cc795;
     --r-rare: #b496f0;
     --r-legendary: #e6b766;
+    --r-mythical: #f08cc8;
     --silhouette: brightness(0) invert(1);
     color-scheme: dark;
   }
@@ -817,6 +819,8 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 .r-uncommon { --rc: var(--r-uncommon); }
 .r-rare { --rc: var(--r-rare); }
 .r-legendary { --rc: var(--r-legendary); }
+.r-mythical { --rc: var(--r-mythical); }
+.r-legendary.gacha-card, .r-mythical.gacha-card { box-shadow: 0 0 0 3px var(--surface), 0 0 14px var(--rc); }
 
 .item-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 
@@ -838,7 +842,37 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 .item-emoji { font-size: 28px; line-height: 1.2; }
 .item-name { font-size: 12px; text-align: center; line-height: 1.3; word-break: keep-all; }
 .item-count { position: absolute; top: 4px; right: 6px; font-size: 11px; font-weight: 700; color: var(--text-2); }
-.locked .item-emoji, .item-big.locked { filter: var(--silhouette); opacity: 0.2; }
+.locked .item-emoji, .item-big.locked, .locked img, .pk-big.locked { filter: var(--silhouette); opacity: 0.2; }
+
+/* 포켓몬 */
+.segmented.four { grid-template-columns: repeat(4, 1fr); }
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.pk-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+
+.pk-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 4px 8px;
+  border: 1px solid var(--border);
+  border-bottom: 3px solid var(--rc);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.pk-tile img { width: 100%; max-width: 72px; aspect-ratio: 1; object-fit: contain; }
+.pk-no { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pk-art { width: 64px; height: 64px; object-fit: contain; }
+.gacha-results.one .pk-art { width: 140px; height: 140px; }
+.pk-big { width: 160px; height: 160px; object-fit: contain; }
+.pk-mini { width: 40px; height: 40px; object-fit: contain; }
+/* 크기는 app.js의 sizePixels()가 원래 도트 크기에 비례해 정한다(큰 포켓몬은 크게). */
+.pk-pixel { display: block; width: auto; height: calc(var(--s) * 12cqw); image-rendering: pixelated; }
+.modal-actions { flex-wrap: wrap; }
 .item-tile.locked .item-name { color: var(--text-3); }
 
 .gacha-stage { font-size: 72px; text-align: center; padding: 18px 0 8px; animation: pop 0.6s ease both; }
