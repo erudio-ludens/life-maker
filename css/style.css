@@ -67,6 +67,9 @@
 
 * { box-sizing: border-box; }
 
+/* display를 지정한 요소라도 hidden 속성이면 반드시 숨긴다 */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; }
 
 body {
@@ -269,9 +272,9 @@ a { color: inherit; }
   color: var(--text-3);
   font-size: 18px;
   line-height: 1;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -324,8 +327,8 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
   border: 0;
   background: none;
   color: var(--text-3);
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   cursor: pointer;
   font-size: 15px;
@@ -506,26 +509,59 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
   animation: fade 0.18s ease;
 }
 
+.modal-wrap { position: relative; width: 100%; max-width: 560px; animation: rise 0.22s ease; }
+
 .modal {
   background: var(--surface);
   width: 100%;
-  max-width: 560px;
   max-height: 88vh;
   overflow-y: auto;
   border-radius: 18px 18px 0 0;
-  padding: 20px 18px calc(18px + env(safe-area-inset-bottom));
-  animation: rise 0.22s ease;
+  padding: 20px 18px 0;
 }
+
+/* 창 오른쪽 위 닫기(×): 내용을 내려도 그 자리에 있다 */
+.modal-x {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal h2:not(.story-title) { padding-right: 44px; }
 
 @media (min-width: 640px) {
   .backdrop { align-items: center; }
-  .modal { border-radius: 18px; padding-bottom: 20px; }
+  .modal { border-radius: 18px; }
 }
 
 .modal h2 { font-size: 18px; }
 .modal-head { margin-bottom: 12px; }
 .modal .sub-title { font-size: 14px; color: var(--text-2); margin: 18px 0 8px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* 확인·닫기 버튼은 내용을 내려도 창 아래에 늘 보인다 */
+.modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px 0 calc(16px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  box-shadow: 0 -10px 12px -10px rgba(0, 0, 0, 0.12);
+}
+
 .modal-actions .btn { min-width: 88px; }
 
 .activity-list { list-style: none; margin: 0; padding: 0; }
@@ -555,7 +591,20 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
   animation: pop 0.6s ease 0.5s both;
 }
 
-.loading { text-align: center; padding: 28px 0 12px; }
+.loading { text-align: center; padding: 28px 0 32px; }
+
+.more-btn {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  margin-top: 2px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hero-meta + .hero-meta { margin-top: 2px; }
 .loading p { font-family: var(--font-voice); color: var(--text-2); margin: 14px 0 0; }
 
 .spinner {
@@ -756,8 +805,8 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 
 .q-check {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   margin-top: 1px;
   border-radius: 9px;
   border: 2px solid var(--border-strong);

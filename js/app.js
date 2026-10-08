@@ -191,7 +191,14 @@
     clearInterval(modalTimer);
     modalTimer = null;
     modalLocked = !!(opts && opts.locked);
-    $modal.innerHTML = `<div class="backdrop" data-backdrop><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;
+    const closeX = modalLocked ? '' : '<button class="modal-x" data-action="close-modal" aria-label="닫기">×</button>';
+    $modal.innerHTML = `
+      <div class="backdrop" data-backdrop>
+        <div class="modal-wrap">
+          <div class="modal" role="dialog" aria-modal="true">${html}</div>
+          ${closeX}
+        </div>
+      </div>`;
     document.body.classList.add('modal-open');
   }
 
@@ -340,10 +347,10 @@
     }).join('')}</section>`;
   }
 
+  // 일지 쓰기 칸 아래 한 줄 안내 (하루 기준 시각은 설정에서 보여 준다)
   function modeHint() {
-    const labels = { none: '직접 판정 모드', gemini: 'Gemini가 판정해요', claude: 'Claude가 판정해요', mock: '테스트 AI가 판정해요' };
-    const h = state.settings.dayStartHour;
-    return `${labels[state.settings.ai.provider]} · 하루 기준 ${h === 0 ? '자정' : `새벽 ${h}시`}`;
+    const labels = { none: '직접 판정해요', gemini: 'Gemini가 판정해요', claude: 'Claude가 판정해요', mock: '테스트 AI가 판정해요' };
+    return labels[state.settings.ai.provider];
   }
 
   function gainChips(g) {
@@ -576,10 +583,13 @@
   }
 
   // 훈장·업적을 받은 날의 이야기: 그날의 일기, 기록, 그때의 나
-  function showStory(kind, entryId) {
+  // backTo: 판정 결과 창에서 열었으면 그 일지 id. 닫는 대신 판정 결과로 돌아갈 수 있게 한다.
+  let storyBack = null;
+  function showStory(kind, entryId, backTo) {
     const e = findEntry(entryId);
     const h = allHonors().find((x) => x.kind === kind && x.entryId === entryId);
     if (!e || !h) return;
+    storyBack = backTo || null;
     const isMedal = kind === 'medal';
     const snap = (progress.perEntry[entryId] || {}).snapshot;
     const equipped = state.character.title === honorKey(h);
@@ -604,7 +614,9 @@
       <blockquote class="narration">${esc(e.narration)}</blockquote>
       ${snapshot}
       <div class="modal-actions">
-        <button class="btn ghost" data-action="close-modal">닫기</button>
+        ${storyBack
+          ? `<button class="btn ghost" data-action="show-result" data-id="${storyBack}">← 판정으로</button>`
+          : '<button class="btn ghost" data-action="close-modal">닫기</button>'}
         ${isMedal && !LM.medalPlaced(state, entryId) ? `<button class="btn" data-action="room-place" data-kind="medal" data-ref="${entryId}">방에 걸기</button>` : ''}
         ${equipped
           ? '<button class="btn" data-action="unequip">칭호 떼기</button>'
@@ -679,7 +691,7 @@
 
     const activities = e.activities || [];
     openModal(`
-      <div class="modal-head">
+      <div class="modal-head" data-result="${e.id}">
         <h2>${fresh ? '오늘의 판정' : `${fmtGameDate(e.gameDate)} ${fmtTime(e.createdAt)}`}</h2>
       </div>
       ${awardBlock(e)}
@@ -1484,7 +1496,7 @@
         </div>
         ${roomEdit ? roomEditor() : `
           <div class="room-bar">
-            <span class="hint" style="margin:0">${esc(state.character.name)}의 방 · 물건 ${placed}개</span>
+            <span class="hint" style="margin:0">${esc(state.character.name)}의 방 · 놓은 것 ${placed}개</span>
             <button class="btn small" data-action="room-edit">꾸미기</button>
           </div>`}
       </section>`;
@@ -1703,7 +1715,8 @@
       <section class="card hero">
         ${equippedHonor() ? `<div><span class="title-pill">${esc(equippedHonor().title)}</span></div>` : ''}
         <div class="hero-name">${esc(state.character.name)}<button class="icon-btn" data-action="rename" aria-label="이름 바꾸기">✎</button></div>
-        <div class="hero-meta">${fmtDay(state.createdAt)} 기록 시작 · 일지 ${state.entries.length}개 · 스탯 합계 ${total} · 업적 포인트 ${progress.honors.points.toLocaleString()}</div>
+        <div class="hero-meta">${fmtDay(state.createdAt)} 기록 시작 · 일지 ${state.entries.length}개</div>
+        <div class="hero-meta">스탯 합계 ${total} · 업적 포인트 ${progress.honors.points.toLocaleString()}</div>
       </section>
       <section class="card">
         <div class="card-head"><h2 class="card-title">스탯</h2>${editBtn}</div>
@@ -2238,6 +2251,18 @@
         </div>
       </nav>`;
     sizePixels();
+    markClamped();
+  }
+
+  // 길어서 잘린 일기에만 '더 보기' 버튼을 붙인다.
+  function markClamped() {
+    document.querySelectorAll('.entry-text').forEach((p) => {
+      const next = p.nextElementSibling;
+      const hasBtn = next && next.classList.contains('more-btn');
+      if (!p.classList.contains('open') && p.scrollHeight > p.clientHeight + 2 && !hasBtn) {
+        p.insertAdjacentHTML('afterend', '<button class="more-btn" data-action="expand-more">더 보기</button>');
+      }
+    });
   }
 
   // ---------- 이벤트 ----------
@@ -2284,11 +2309,19 @@
         showResult(id, false);
         break;
       case 'expand':
-        el.classList.toggle('open');
+      case 'expand-more': {
+        const text = action === 'expand' ? el : el.previousElementSibling;
+        const open = text.classList.toggle('open');
+        const more = text.nextElementSibling;
+        if (more && more.classList.contains('more-btn')) more.textContent = open ? '접기' : '더 보기';
         break;
-      case 'story':
-        showStory(el.dataset.kind, id);
+      }
+      case 'story': {
+        // 판정 결과 창 안에서 눌렀으면, 이야기 카드에서 그 판정으로 돌아갈 수 있게 한다.
+        const fromResult = el.closest('#modal-root') && $modal.querySelector('[data-result]');
+        showStory(el.dataset.kind, id, fromResult ? fromResult.dataset.result : null);
         break;
+      }
 
       case 'quests-receive':
         await receiveQuests(false);
@@ -2456,7 +2489,7 @@
         render();
         toast(action === 'equip' ? '칭호로 달았어요.' : '칭호를 뗐어요.');
         const [kind, entryId] = String(key).split(':');
-        showStory(kind, entryId);
+        showStory(kind, entryId, storyBack);
         break;
       }
       case 'choose-title':
