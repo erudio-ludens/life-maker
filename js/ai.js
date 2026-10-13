@@ -64,6 +64,18 @@ window.LM = window.LM || {};
 - title: 2~12자 칭호. (예: "비가 와서 우산 없이 뛰었다" → 우중 질주자) 지금까지 받은 업적과 겹치지 않게 하세요.
 - description: 무엇 때문에 받았는지 한 줄. symbol: 이모지 1개.
 
+[숫자 기록] 활동마다 measures 칸이 있습니다.
+- 거리, 쪽수, 횟수, 개수, 시간처럼 일기에 숫자로 분명히 나온 양만 적습니다. 일기에 없는 숫자는 지어내지 마세요. 없으면 빈 배열.
+- name: 무엇을 센 것인지 짧게 (예: 달리기, 독서, 팔굽혀펴기, 영어 단어). unit: 짧은 단위 (km, 쪽, 회, 개, 권, 분, 시간).
+- '누적 기록'에 같은 종류가 이미 있으면 그 name과 unit을 글자 그대로 다시 쓰세요. 다른 이름으로 쓰면 따로 쌓입니다.
+- 스킬에 쓴 시간은 skills의 minutes로 이미 쌓이니 measures에 다시 적지 마세요.
+
+[누적 업적] milestones 칸
+- '누적 기록'은 이번 일지 전까지 쌓인 양입니다. 여기에 오늘 measures(스킬은 minutes)를 더한 누적이 이 사람에게 의미 있는 큰 숫자를 넘었을 때만 적습니다. 대부분의 날은 빈 배열입니다.
+- 하루의 성과가 아니라 쌓인 양을 기념합니다. 시간은 100시간·1000시간·10000시간, 다른 것은 그 일에서 의미 있는 큰 단위로만 주세요. (예: 달리기 100km·1000km, 독서 1만 쪽, 팔굽혀펴기 1만 회)
+- name·unit은 누적 기록(또는 오늘 measures)과 같게, threshold는 넘은 기준 숫자로 10, 20, 50, 100, 200, 500, 1000처럼 1·2·5로 시작하는 딱 떨어지는 수만 씁니다. '이미 받은 기준'은 다시 주지 마세요.
+- title: 2~12자 칭호 (예: 천 킬로미터의 주자). description: 무엇이 얼마나 쌓였는지 한 줄. symbol: 이모지 1개.
+
 [퀘스트] '진행 중인 퀘스트'가 있을 때만 quest_progress 칸이 있습니다.
 - 오늘 일기에 그 퀘스트를 실제로 한 내용이 분명히 있을 때만 적으세요. 애매하면 적지 마세요.
 - code: 퀘스트 앞의 코드. amount: 오늘 늘어난 횟수 (한 번이면 끝나는 퀘스트는 1).
@@ -81,8 +93,17 @@ window.LM = window.LM || {};
       intensity: { type: 'integer', description: '강도 1~5' },
       primary_stat: { type: 'string', enum: statNames },
       secondary_stats: { type: 'array', items: { type: 'string', enum: statNames } },
+      measures: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name', 'unit', 'amount'],
+          properties: { name: { type: 'string' }, unit: { type: 'string' }, amount: { type: 'number' } },
+        },
+      },
     };
-    const required = ['summary', 'intensity', 'primary_stat', 'secondary_stats'];
+    const required = ['summary', 'intensity', 'primary_stat', 'secondary_stats', 'measures'];
     if (skillNames.length) {
       activityProps.skills = {
         type: 'array',
@@ -141,6 +162,22 @@ window.LM = window.LM || {};
         },
       };
     }
+    properties.milestones = {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'unit', 'threshold', 'title', 'description', 'symbol'],
+        properties: {
+          name: { type: 'string' },
+          unit: { type: 'string' },
+          threshold: { type: 'number' },
+          title: str('누적 업적 이름이자 칭호, 2~12자'),
+          description: str('무엇이 얼마나 쌓였는지 한 줄'),
+          symbol: str('이모지 1개'),
+        },
+      },
+    };
     properties.narration = { type: 'string' };
     return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties };
   }
@@ -175,7 +212,10 @@ window.LM = window.LM || {};
 
     let lucky = '';
     if (entry.lucky) {
-      const owned = state.entries.filter((e) => e.achievement).map((e) => e.achievement.title);
+      const owned = state.entries.flatMap((e) => [
+        ...(e.achievement ? [e.achievement.title] : []),
+        ...(e.milestones || []).map((m) => m.title),
+      ]);
       lucky = `\n업적 발동: 이번 일지에서 무작위 업적이 발동했습니다. achievement 칸을 채워 주세요.
 지금까지 받은 업적: ${owned.length ? owned.join(', ') : '없음'}`;
     }
@@ -213,6 +253,7 @@ ${medals.length ? medals.join('\n') : '없음'}
       .flatMap((e) => (e.activities || []).map((a) => a.summary))
       .filter(Boolean);
     const quests = openQuests(state, entry);
+    const counters = LM.counterLines(state, entry);
 
     const user = `기록자 이름: ${state.character.name}
 스탯 목록: ${statNames.join(', ')}
@@ -220,6 +261,8 @@ ${medals.length ? medals.join('\n') : '없음'}
 오늘 이미 판정된 활동:
 ${earlier.length ? earlier.map((s) => `- ${s}`).join('\n') : '없음'}
 ${historyContext(state, entry)}
+누적 기록 (이번 일지 전까지):
+${counters.length ? counters.join('\n') : '없음'}
 진행 중인 퀘스트:
 ${quests.lines.length ? quests.lines.join('\n') : '없음'}
 
@@ -263,13 +306,16 @@ ${entry.text}
             };
           })
           .filter(Boolean);
-        return {
+        const out = {
           summary: String(a.summary || '').trim().slice(0, 200),
           intensity: clamp(Math.round(Number(a.intensity)) || 1, 1, 5),
           primary,
           secondary,
           skills,
         };
+        const measures = LM.normMeasures(a.measures); // 화면에는 안 보이고 누적 업적에만 쓴다
+        if (measures.length) out.measures = measures;
+        return out;
       })
       .filter(Boolean);
 
@@ -305,7 +351,20 @@ ${entry.text}
       questProgress.push({ ...target, amount: clamp(Math.round(Number(qp.amount)) || 1, 1, 99) });
     }
 
-    return { activities, narration, medal, achievement, questProgress };
+    // 누적 업적 제안. 실제로 기준을 넘었는지는 LM.decideMilestones가 다시 확인한다.
+    const milestoneHints = (Array.isArray(raw.milestones) ? raw.milestones : [])
+      .filter((m) => m && text(m.name, 20) && Number(m.threshold) > 0)
+      .slice(0, 5)
+      .map((m) => ({
+        name: text(m.name, 20),
+        unit: text(m.unit, 8),
+        threshold: Number(m.threshold),
+        title: text(m.title, 20),
+        description: text(m.description, 120),
+        symbol: LM.firstEmoji(m.symbol, '🏁'),
+      }));
+
+    return { activities, narration, medal, achievement, questProgress, milestoneHints };
   }
 
   // ---------- Gemini (REST) ----------
@@ -486,6 +545,9 @@ ${entry.text}
         act.skills = skillNames.filter((n) => s.includes(n))
           .map((n) => ({ skill: n, minutes: 120, novelty: 'somewhat_new', output: 'finished' }));
       }
+      // "달리기 5km"처럼 숫자+단위가 있으면 앞 낱말을 이름으로 쓴다.
+      const num = s.match(/(\S+)\s+(\d+(?:\.\d+)?)\s*(km|쪽|회|개|분|시간)/);
+      act.measures = num ? [{ name: num[1], unit: num[3], amount: Number(num[2]) }] : [];
       return act;
     });
     let grade = null;
@@ -508,6 +570,11 @@ ${entry.text}
     if (schema.properties.quest_progress && /퀘스트/.test(diary)) {
       result.quest_progress = [{ code: schema.properties.quest_progress.items.properties.code.enum[0], amount: 1 }];
     }
+    // "누적"이라고 쓰면 첫 숫자 기록으로 10 기준 누적 업적을 제안한다(코드가 실제로 넘었는지 다시 확인).
+    const firstMeasure = activities.flatMap((a) => a.measures)[0];
+    result.milestones = /누적/.test(diary) && firstMeasure
+      ? [{ name: firstMeasure.name, unit: firstMeasure.unit, threshold: 10, title: '(테스트) 누적 업적', description: '테스트용 누적 업적', symbol: '🏁' }]
+      : [];
     result.narration = '(테스트 판정) 오늘 하루가 기록되었다. 작은 걸음도 성장의 일부였다.';
     return JSON.stringify(result);
   }

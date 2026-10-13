@@ -127,12 +127,15 @@ window.LM = window.LM || {};
   }
 
   const logKey = (l) => `${l.at}|${l.amount}|${l.by}|${l.entryId}`;
+  const byAt = (x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : 0);
   function mergeQuest(q, other) {
     if (!other) return q;
     const map = new Map();
     [...q.log, ...other.log].forEach((l) => map.set(logKey(l), l));
-    q.log = [...map.values()].sort((x, y) => (x.at < y.at ? -1 : 1));
-    q.progress = LM.clamp(q.log.reduce((sum, l) => sum + l.amount, 0), 0, q.target);
+    q.log = [...map.values()].sort(byAt);
+    // 기기마다 0~목표 사이로 잘린 양만 기록하므로, 합칠 때도 시간순으로 한 단계씩 잘라 가며 더한다.
+    // (그냥 합하면 두 기기에서 같이 완료한 뒤의 '완료 취소'가 다음 동기화에서 되돌려진다)
+    q.progress = q.log.reduce((p, l) => LM.clamp(p + l.amount, 0, q.target), 0);
     q.doneAt = q.progress >= q.target ? (q.doneAt || other.doneAt || (q.log.length ? q.log[q.log.length - 1].at : null)) : null;
     return q;
   }
@@ -146,11 +149,18 @@ window.LM = window.LM || {};
       const bWins = (pb.updatedAt || 0) > (pa.updatedAt || 0);
       const win = clone(bWins ? pb : pa);
       const lose = bWins ? pa : pb;
+      // ↻로 바꾸거나 지운 퀘스트는 어느 쪽에서든 다시 살아나지 않게 한다.
+      const removed = { ...(pa.removed || {}), ...(pb.removed || {}) };
+      win.active = win.active.filter((q) => !removed[q.id]);
+      win.spare = win.spare.filter((q) => !removed[q.id]);
       const loseQuests = new Map([...lose.active, ...lose.spare].map((q) => [q.id, q]));
       [...win.active, ...win.spare].forEach((q) => mergeQuest(q, loseQuests.get(q.id)));
-      // 진 쪽에만 있던 퀘스트라도 이미 진행한 것은 버리지 않는다(포인트를 지키기 위해).
+      // 진 쪽에만 있던 퀘스트라도 이미 진행했거나 직접 추가한 것은 버리지 않는다(지운 것은 빼고).
       const winIds = new Set([...win.active, ...win.spare].map((q) => q.id));
-      lose.active.forEach((q) => { if (q.log.length && !winIds.has(q.id)) win.active.push(clone(q)); });
+      lose.active.forEach((q) => {
+        if (!winIds.has(q.id) && !removed[q.id] && (q.log.length || q.source === 'self')) win.active.push(clone(q));
+      });
+      if (Object.keys(removed).length) win.removed = removed;
       win.received = !!(pa.received || pb.received);
       win.updatedAt = Math.max(pa.updatedAt || 0, pb.updatedAt || 0);
       out[id] = win;
@@ -239,6 +249,11 @@ window.LM = window.LM || {};
       a.secondary = (a.secondary || []).map((id) => statMap[id] || id);
       (a.skills || []).forEach((k) => { k.id = skillMap[k.id] || k.id; });
     }));
+    // 스킬 시간으로 받은 누적 업적도 같은 스킬 id를 가리키게 한다(같은 업적을 두 번 받지 않도록).
+    o.entries.forEach((e) => (e.milestones || []).forEach((m) => {
+      const id = String(m.counter).startsWith('s:') ? m.counter.slice(2) : null;
+      if (id && skillMap[id]) m.counter = `s:${skillMap[id]}`;
+    }));
     o.stamps = {};
     Object.values(o.quests.periods).forEach((p) => { p.updatedAt = 0; });
 
@@ -319,9 +334,12 @@ window.LM = window.LM || {};
     let again = false;
     let timer = null;
     let stopped = false;
+    let held = false; // 처음 로그인해서 합칠지 고르는 동안에는 올리지도 받지도 않는다
 
     async function run() {
       if (!hooks.getState()) { setStatus('idle'); return; }
+      // 판정·끌기 중에는 받아도 바로 합칠 수 없으니, 내려받기 전에 미룬다(헛된 다운로드·복호화 방지).
+      if (hooks.isBusy()) { again = true; return; }
       setStatus('syncing');
       try {
         for (let round = 0; round < 4 && !stopped; round += 1) {
@@ -383,17 +401,24 @@ window.LM = window.LM || {};
       },
       sync() {
         if (stopped) return Promise.resolve();
+        if (held) { again = true; return Promise.resolve(); }
         if (running) { again = true; return running; }
         running = run().finally(() => {
           running = null;
-          if (again && !stopped) { again = false; eng.schedule(1500); }
+          if (again && !stopped && !held) { again = false; eng.schedule(1500); }
         });
         return running;
       },
       schedule(ms) {
         if (stopped) return;
+        if (held) { again = true; return; }
         clearTimeout(timer);
         timer = setTimeout(() => { eng.sync().catch(() => {}); }, ms === undefined ? 2500 : ms);
+      },
+      hold(on) {
+        held = !!on;
+        if (held) clearTimeout(timer);
+        else if (again) { again = false; eng.schedule(0); }
       },
       stop() { stopped = true; clearTimeout(timer); },
     };
@@ -564,22 +589,37 @@ window.LM = window.LM || {};
     });
   }
 
+  // 로그인 직후에는 엔진을 멈춰 둔다. 앱이 '합치기/클라우드로 바꾸기'를 정하고 S.finishLink()를 부르면 그때 돈다.
+  // (정하기 전에 돌면 아직 합치지 않은 이 기기 기록이 클라우드 문서를 덮어쓴다)
   async function finishLogin(k) {
     key = k;
     info.keyJwk = await crypto.subtle.exportKey('jwk', key);
+    info.linked = false;
     await LM.db.saveKey('sync', info);
     startEngine();
+    engine.hold(true);
     setStatus('idle');
     const remote = await engine.list();
     return { cloudHas: !!remote.core };
   }
+
+  S.finishLink = async () => {
+    if (!info || !engine) return;
+    info.linked = true;
+    await LM.db.saveKey('sync', info);
+    engine.hold(false);
+  };
 
   S.init = async (h) => {
     hooks = h;
     if (!CFG) return;
     try {
       info = await LM.db.loadKey('sync');
-      if (info && info.keyJwk && info.refreshToken) {
+      if (info && info.linked === false) {
+        // 합칠지 정하기 전에 앱이 닫혔다 → 로그인을 처음부터 다시 하게 한다.
+        await LM.db.saveKey('sync', null);
+        info = null;
+      } else if (info && info.keyJwk && info.refreshToken) {
         key = await crypto.subtle.importKey('jwk', info.keyJwk, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
         startEngine();
         setStatus('idle');

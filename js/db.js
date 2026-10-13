@@ -29,6 +29,8 @@ window.LM = window.LM || {};
       const req = fn(tx.objectStore(STORE));
       tx.oncomplete = () => resolve(req.result);
       tx.onerror = () => reject(tx.error);
+      // 저장 공간 부족처럼 커밋 단계에서 끊기면 error 없이 abort만 온다.
+      tx.onabort = () => reject(tx.error || new Error('저장하지 못했어요. 기기의 저장 공간을 확인해 주세요.'));
     }));
   }
 

@@ -148,8 +148,8 @@ window.LM = window.LM || {};
         }
 
         for (const sk of act.skills || []) {
-          if (!skills[sk.id]) continue;
-          const raw = clamp(Math.round((sk.minutes || 0) / LM.MINUTES_PER_POINT), 1, LM.SKILL_DAILY_POINT_CAP);
+          if (!skills[sk.id] || !(sk.minutes > 0)) continue; // 0분이면 숙련도도 없다
+          const raw = clamp(Math.round(sk.minutes / LM.MINUTES_PER_POINT), 1, LM.SKILL_DAILY_POINT_CAP);
           const used = day.skillPoints[sk.id] || 0;
           const points = clamp(LM.SKILL_DAILY_POINT_CAP - used, 0, raw);
           day.skillPoints[sk.id] = used + points;
@@ -186,7 +186,7 @@ window.LM = window.LM || {};
       perEntry[entry.id] = { stats: statResults, skills: skillResults };
 
       // 훈장·업적을 받은 날의 내 모습을 남겨 둔다.
-      if (entry.medal || entry.achievement) {
+      if (entry.medal || entry.achievement || (entry.milestones && entry.milestones.length)) {
         perEntry[entry.id].snapshot = {
           stats: state.stats.map((s) => ({ id: s.id, value: stats[s.id].value })),
           skills: state.skills.map((s) => ({ id: s.id, xp: skills[s.id].xp })),
@@ -194,15 +194,24 @@ window.LM = window.LM || {};
       }
     }
 
+    // 훈장·업적 목록. key는 칭호로 달 때와 이야기 카드를 열 때 쓰는 이름표다.
     const medals = [];
     const achievements = [];
+    const reached = new Set(); // 같은 누적 업적이 두 기기에서 따로 붙었으면 처음 것만
     for (const entry of judged) {
+      const base = { entryId: entry.id, gameDate: entry.gameDate };
       if (entry.medal) {
         const grade = LM.MEDAL_GRADES[entry.medal.grade] || LM.MEDAL_GRADES.bronze;
-        medals.push({ kind: 'medal', entryId: entry.id, gameDate: entry.gameDate, ...entry.medal, points: grade.points });
+        medals.push({ ...entry.medal, ...base, kind: 'medal', key: `medal:${entry.id}`, points: grade.points });
       }
       if (entry.achievement) {
-        achievements.push({ kind: 'achievement', entryId: entry.id, gameDate: entry.gameDate, ...entry.achievement, points: LM.ACHIEVEMENT_POINTS });
+        achievements.push({ ...entry.achievement, ...base, kind: 'achievement', key: `achievement:${entry.id}`, points: LM.ACHIEVEMENT_POINTS });
+      }
+      for (const m of entry.milestones || []) {
+        const once = `${m.counter}@${m.threshold}`;
+        if (reached.has(once)) continue;
+        reached.add(once);
+        achievements.push({ ...m, ...base, kind: 'milestone', key: `milestone:${entry.id}:${m.id}`, points: LM.MILESTONE_POINTS });
       }
     }
     const points = [...medals, ...achievements].reduce((sum, h) => sum + h.points, 0);

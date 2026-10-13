@@ -750,6 +750,11 @@ textarea { resize: vertical; min-height: 170px; line-height: 1.7; }
 .achv-text b { display: block; font-size: 15px; }
 .achv-text small { display: block; font-size: 13px; color: var(--text-2); }
 .achv-date { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.achv-tag {
+  display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; vertical-align: 2px;
+  color: var(--accent); background: var(--accent-soft);
+}
 
 .medal-form {
   margin-top: 14px;

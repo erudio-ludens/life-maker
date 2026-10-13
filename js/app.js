@@ -42,7 +42,8 @@
   const findEntry = (id) => state.entries.find((e) => e.id === id);
   const statName = (id) => (state.stats.find((s) => s.id === id) || {}).name || '(지운 스탯)';
   const skillName = (id) => (state.skills.find((s) => s.id === id) || {}).name || '(지운 스킬)';
-  const honorKey = (h) => `${h.kind}:${h.entryId}`;
+  const honorKey = (h) => h.key; // medal:일지id, achievement:일지id, milestone:일지id:업적id
+  const honorLabel = (h) => (h.kind === 'medal' ? `${LM.MEDAL_GRADES[h.grade].label} 훈장` : h.kind === 'milestone' ? '누적 업적' : '업적');
   const allHonors = () => [...progress.honors.medals, ...progress.honors.achievements];
 
   function findQuest(periodId, questId) {
@@ -133,6 +134,7 @@
   // 예전 버전 데이터나 백업 파일에 빠진 설정을 채운다.
   function migrate(s) {
     s.version = s.version || 1;
+    s.settings = s.settings || {};
     if (!('title' in s.character)) s.character.title = null;
     if (!('avatar' in s.character)) s.character.avatar = null;
     s.quests = s.quests || {};
@@ -148,7 +150,6 @@
     s.room.items = s.room.items || [];
     LM.ensureAvatarInRoom(s);
     LM.ensureSyncMeta(s);
-    s.settings = s.settings || {};
     const ai = s.settings.ai = s.settings.ai || {};
     ai.provider = ai.provider || 'none';
     if (ai.provider === 'mock' && !LM.MOCK_ENABLED) ai.provider = 'none';
@@ -362,22 +363,15 @@
     return `<div class="chips">${stats.join('')}${skills.join('')}</div>`;
   }
 
+  // 이 일지로 받은 훈장·업적·누적 업적
+  const entryHonors = (e) => allHonors().filter((h) => h.entryId === e.id);
+
   function honorRows(e) {
-    const rows = [];
-    if (e.medal) {
-      rows.push(`
-        <button class="honor-row" data-action="story" data-kind="medal" data-id="${e.id}">
-          <span class="honor-emoji">${esc(e.medal.symbol)}</span>
-          <span><b>${LM.MEDAL_GRADES[e.medal.grade].label} 훈장</b> ${esc(e.medal.title)}</span>
-        </button>`);
-    }
-    if (e.achievement) {
-      rows.push(`
-        <button class="honor-row" data-action="story" data-kind="achievement" data-id="${e.id}">
-          <span class="honor-emoji">${esc(e.achievement.symbol)}</span>
-          <span><b>업적</b> ${esc(e.achievement.title)}</span>
-        </button>`);
-    }
+    const rows = entryHonors(e).map((h) => `
+      <button class="honor-row" data-action="story" data-key="${esc(h.key)}">
+        <span class="honor-emoji">${esc(h.symbol)}</span>
+        <span><b>${honorLabel(h)}</b> ${esc(h.title)}</span>
+      </button>`);
     return rows.length ? `<div class="honor-rows">${rows.join('')}</div>` : '';
   }
 
@@ -467,6 +461,10 @@
       judgedAt: new Date().toISOString(),
     });
     if (result.model) entry.model = result.model;
+    // 숫자로 쌓인 양이 기준을 넘었으면 누적 업적 (활동을 적은 뒤에 계산해야 한다)
+    const milestones = LM.decideMilestones(state, entry, result.milestoneHints || []);
+    if (milestones.length) entry.milestones = milestones;
+    else delete entry.milestones;
     entry.questProgress = [];
     for (const qp of result.questProgress || []) {
       const q = findQuest(qp.periodId, qp.questId);
@@ -475,8 +473,9 @@
       if (applied) entry.questProgress.push({ periodId: qp.periodId, questId: q.id, amount: applied });
     }
     // 아직 단 칭호가 없으면 처음 받은 칭호를 바로 단다.
-    if ((medal || achievement) && !equippedHonor()) {
-      state.character.title = `${medal ? 'medal' : 'achievement'}:${entry.id}`;
+    if ((medal || achievement || milestones.length) && !equippedHonor()) {
+      state.character.title = medal ? `medal:${entry.id}`
+        : achievement ? `achievement:${entry.id}` : `milestone:${entry.id}:${milestones[0].id}`;
     }
   }
 
@@ -484,10 +483,17 @@
 
   const LOADING_LINES = ['기록관이 일지를 읽는 중…', '오늘 한 일을 정리하는 중…', '경험치를 계산하는 중…', '오늘의 기록을 남기는 중…'];
 
-  async function runAiJudge(id) {
-    if (busy) return;
+  // 다른 기기에서 이미 판정했으면 다시 판정하지 않는다(퀘스트 진행이 두 번 반영되지 않도록).
+  function stillPending(id) {
     const entry = findEntry(id);
-    if (!entry) return;
+    if (entry && entry.status === 'pending') return entry;
+    toast(entry ? '이미 판정된 기록이에요. 다른 기기에서 판정한 것 같아요.' : '지워진 기록이에요.');
+    render();
+    return null;
+  }
+
+  async function runAiJudge(id) {
+    if (busy || !stillPending(id)) return;
     busy = true;
     openModal(`<div class="loading"><div class="spinner"></div><p id="loading-line">${LOADING_LINES[0]}</p></div>`, { locked: true });
     let i = 0;
@@ -496,13 +502,9 @@
       if (el) el.textContent = LOADING_LINES[++i % LOADING_LINES.length];
     }, 1800);
 
+    let result;
     try {
-      const result = await LM.judgeEntry(state, entry);
-      applyJudgement(entry, result, 'ai');
-      await commit();
-      busy = false;
-      render();
-      showResult(id, true);
+      result = await LM.judgeEntry(state, findEntry(id));
     } catch (err) {
       console.error(err);
       busy = false;
@@ -516,7 +518,17 @@
           <button class="btn" data-action="manual" data-id="${id}">직접 판정</button>
           <button class="btn primary" data-action="judge" data-id="${id}">다시 시도</button>
         </div>`);
+      return;
     }
+    busy = false;
+    closeModal();
+    const entry = stillPending(id);
+    if (!entry) return;
+    applyJudgement(entry, result, 'ai');
+    const saving = commit(); // 계산은 바로 끝나고 저장만 기다린다
+    render();
+    showResult(id, true);
+    await saving; // 저장에 실패해도 판정 결과는 먼저 보여 주고, 실패는 handleError가 알린다
   }
 
   function activityItem(a) {
@@ -553,47 +565,39 @@
   }
 
   function awardBlock(e) {
-    const blocks = [];
-    if (e.medal) {
-      const grade = LM.MEDAL_GRADES[e.medal.grade];
-      blocks.push(`
+    return entryHonors(e).map((h) => {
+      const isMedal = h.kind === 'medal';
+      const kicker = isMedal ? `${honorLabel(h)} · 업적 포인트 +${h.points}`
+        : h.kind === 'milestone' ? `누적 업적 · 업적 포인트 +${h.points}` : `업적 달성 · 업적 포인트 +${h.points}`;
+      const desc = isMedal ? h.reason : h.description;
+      return `
         <div class="award">
-          ${LM.medalSvg(e.medal, 76)}
+          ${isMedal ? LM.medalSvg(h, 76) : `<div class="achv-badge big">${esc(h.symbol)}</div>`}
           <div class="award-body">
-            <div class="award-kicker">${grade.label} 훈장 · 업적 포인트 +${grade.points}</div>
-            <div class="award-title">${esc(e.medal.title)}</div>
-            ${e.medal.reason ? `<div class="award-desc">${esc(e.medal.reason)}</div>` : ''}
-            <button class="btn small" data-action="story" data-kind="medal" data-id="${e.id}">이야기 카드</button>
+            <div class="award-kicker">${kicker}</div>
+            <div class="award-title">${esc(h.title)}</div>
+            ${desc ? `<div class="award-desc">${esc(desc)}</div>` : ''}
+            <button class="btn small" data-action="story" data-key="${esc(h.key)}">이야기 카드</button>
           </div>
-        </div>`);
-    }
-    if (e.achievement) {
-      blocks.push(`
-        <div class="award">
-          <div class="achv-badge big">${esc(e.achievement.symbol)}</div>
-          <div class="award-body">
-            <div class="award-kicker">업적 달성 · 업적 포인트 +${LM.ACHIEVEMENT_POINTS}</div>
-            <div class="award-title">${esc(e.achievement.title)}</div>
-            ${e.achievement.description ? `<div class="award-desc">${esc(e.achievement.description)}</div>` : ''}
-            <button class="btn small" data-action="story" data-kind="achievement" data-id="${e.id}">이야기 카드</button>
-          </div>
-        </div>`);
-    }
-    return blocks.join('');
+        </div>`;
+    }).join('');
   }
 
   // 훈장·업적을 받은 날의 이야기: 그날의 일기, 기록, 그때의 나
   // backTo: 판정 결과 창에서 열었으면 그 일지 id. 닫는 대신 판정 결과로 돌아갈 수 있게 한다.
   let storyBack = null;
-  function showStory(kind, entryId, backTo) {
-    const e = findEntry(entryId);
-    const h = allHonors().find((x) => x.kind === kind && x.entryId === entryId);
+  function showStory(key, backTo) {
+    const h = allHonors().find((x) => x.key === key);
+    const e = h && findEntry(h.entryId);
     if (!e || !h) return;
+    const entryId = e.id;
     storyBack = backTo || null;
-    const isMedal = kind === 'medal';
+    const isMedal = h.kind === 'medal';
     const snap = (progress.perEntry[entryId] || {}).snapshot;
     const equipped = state.character.title === honorKey(h);
     const desc = isMedal ? h.reason : h.description;
+    const reached = h.kind === 'milestone'
+      ? `<p class="hint">${esc(h.name)} 누적 ${LM.fmtAmount(h.total, h.unit)} · 기준 ${LM.fmtAmount(h.threshold, h.unit)}</p>` : '';
 
     const snapshot = snap ? `
       <h3 class="sub-title">그때의 나</h3>
@@ -605,8 +609,9 @@
       <div class="story">
         <div class="story-visual">${isMedal ? LM.medalSvg(h, 112) : `<div class="achv-badge huge">${esc(h.symbol)}</div>`}</div>
         <h2 class="story-title">${esc(h.title)}</h2>
-        <p class="story-meta">${isMedal ? `${LM.MEDAL_GRADES[h.grade].label} 훈장` : '업적'} · ${fmtGameDate(e.gameDate, true)} · 업적 포인트 +${h.points}</p>
+        <p class="story-meta">${honorLabel(h)} · ${fmtGameDate(e.gameDate, true)} · 업적 포인트 +${h.points}</p>
         ${desc ? `<p class="story-reason">${esc(desc)}</p>` : ''}
+        ${reached}
       </div>
       <h3 class="sub-title">그날의 일기</h3>
       <p class="story-diary">${esc(e.text)}</p>
@@ -620,7 +625,7 @@
         ${isMedal && !LM.medalPlaced(state, entryId) ? `<button class="btn" data-action="room-place" data-kind="medal" data-ref="${entryId}">방에 걸기</button>` : ''}
         ${equipped
           ? '<button class="btn" data-action="unequip">칭호 떼기</button>'
-          : `<button class="btn primary" data-action="equip" data-key="${honorKey(h)}">칭호로 달기</button>`}
+          : `<button class="btn primary" data-action="equip" data-key="${esc(honorKey(h))}">칭호로 달기</button>`}
       </div>`);
   }
 
@@ -637,7 +642,7 @@
       <div class="radio-list title-list">
         ${option('', '칭호 없음', '')}
         ${list.map((h) => option(honorKey(h), `${esc(h.symbol)} ${esc(h.title)}`,
-          `${h.kind === 'medal' ? `${LM.MEDAL_GRADES[h.grade].label} 훈장` : '업적'} · ${fmtGameDate(h.gameDate, true)}`)).join('')}
+          `${honorLabel(h)} · ${fmtGameDate(h.gameDate, true)}`)).join('')}
       </div>
       <div class="modal-actions">
         <button class="btn ghost" data-action="close-modal">취소</button>
@@ -718,6 +723,7 @@
   });
 
   function openManual(id) {
+    if (!stillPending(id)) return;
     manual = { entryId: id, rows: [blankRow()], medal: { title: '', grade: 'bronze', reason: '', symbol: '🏅' } };
     renderManual();
   }
@@ -768,6 +774,7 @@
 
   function renderManual() {
     const e = findEntry(manual.entryId);
+    if (!e) { closeModal(); return; }
     const keep = manual;
     openModal(`
       <div class="modal-head">
@@ -814,7 +821,14 @@
 
   async function submitManual() {
     readManual();
-    const entry = findEntry(manual.entryId);
+    // 창을 열어 둔 사이 다른 기기에서 판정됐거나 지워졌을 수 있다.
+    const entryId = manual.entryId;
+    const entry = findEntry(entryId);
+    if (!entry || entry.status !== 'pending') {
+      closeModal();
+      stillPending(entryId);
+      return;
+    }
     const activities = manual.rows.map((r) => ({
       summary: r.summary.trim(),
       intensity: LM.clamp(Math.round(r.intensity), 1, 5),
@@ -1035,16 +1049,30 @@
       toast('바꿀 퀘스트를 찾지 못했어요.');
       return;
     }
+    markRemoved(p, p.active[idx].id);
     p.active[idx] = next;
     await commit();
     render();
+  }
+
+  // 바꾸거나 지운 퀘스트를 적어 둔다. 다른 기기와 합칠 때 다시 살아나지 않게 하려고.
+  function markRemoved(p, questId) {
+    p.removed = p.removed || {};
+    p.removed[questId] = Date.now();
   }
 
   async function checkQuest(periodId, questId, delta) {
     const q = findQuest(periodId, questId);
     if (!q) return;
     const wasDone = LM.questDone(q);
-    LM.stepQuest(q, delta !== undefined ? delta : (wasDone ? -1 : 1), 'self');
+    const step = delta !== undefined ? delta : (wasDone ? -1 : 1);
+    // 이미 쓴 포인트까지 빼야 하는 완료 취소는 막는다(보유 포인트가 0 아래로 내려가지 않게).
+    const reward = LM.QUEST_KINDS[periodId.split(':')[0]].reward;
+    if (wasDone && step < 0 && wallet.points - reward < 0) {
+      toast(`이 퀘스트로 받은 ${reward}P를 이미 써서 완료를 취소할 수 없어요.`);
+      return;
+    }
+    LM.stepQuest(q, step, 'self');
     await commit();
     render();
     if (!wasDone && LM.questDone(q)) toast(`퀘스트 달성! +${LM.QUEST_KINDS[periodId.split(':')[0]].reward}P`);
@@ -1236,10 +1264,28 @@
       ${views[vaultView]()}`;
   }
 
+  // 도감을 뒤에서 불러온다. 실패하면 다시 그려도 저절로 재시도하지 않고 '다시 시도' 버튼을 보여 준다.
+  let dexState = 'idle'; // idle | loading | error
+  function requestDex() {
+    if (LM.pokedex() || dexState !== 'idle') return;
+    dexState = 'loading';
+    LM.loadPokedex()
+      .then(() => { dexState = 'idle'; })
+      .catch(() => { dexState = 'error'; })
+      .then(() => { if (state) safeRender(); });
+  }
+
   function viewPokedex() {
     const list = LM.pokedex();
     if (!list) {
-      LM.loadPokedex().then(safeRender).catch((err) => toast(err.message));
+      if (dexState === 'error') {
+        return `
+          <div class="empty">
+            <p style="margin:0 0 12px">포켓몬 도감을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</p>
+            <button class="btn" data-action="dex-retry">다시 시도</button>
+          </div>`;
+      }
+      setTimeout(requestDex, 0); // 그리는 도중에는 부르지 않는다
       return '<p class="empty">포켓몬 도감을 불러오는 중이에요…</p>';
     }
     const counts = Object.keys(LM.PK_RARITIES).map((t) => {
@@ -1387,7 +1433,7 @@
     const ent = roomEntity(r);
     if (!ent) return '';
     let action = '';
-    if (!roomEdit && r.kind === 'medal') action = `data-action="story" data-kind="medal" data-id="${r.ref}"`;
+    if (!roomEdit && r.kind === 'medal') action = `data-action="story" data-key="medal:${esc(r.ref)}"`;
     else if (!roomEdit) action = `data-action="room-tap" data-label="${esc(ent.label)}"`;
     return `
       <button class="room-item ${ent.cls} ${roomEdit && roomSel === r.id ? 'sel' : ''}" data-rid="${r.id}" ${action}
@@ -1478,15 +1524,17 @@
     const t = LM.ROOM_THEMES[state.room.theme];
     // 진화 등으로 가진 수보다 많이 놓여 있는 포켓몬은 가진 수만큼만 보여 준다.
     const shown = {};
+    let placed = 0; // 화면에 실제로 보이는 것만 센다(아바타 빼고)
     const items = state.room.items.map((r) => {
       if (r.kind === 'pokemon') {
         const k = Number(r.ref);
         shown[k] = (shown[k] || 0) + 1;
         if (shown[k] > (pkw.owned[k] ? pkw.owned[k].count : 0)) return '';
       }
-      return roomItemHtml(r);
+      const html = roomItemHtml(r);
+      if (html && r.kind !== 'avatar') placed += 1;
+      return html;
     }).join('');
-    const placed = state.room.items.filter((r) => r.kind !== 'avatar' && roomEntity(r)).length;
     return `
       <section class="room-wrap">
         <div class="room scene-${t.scene} ${t.dark ? 'dark-scene' : ''} ${roomEdit ? 'editing' : ''}" id="room" style="${LM.sceneStyle(t)}">
@@ -1516,20 +1564,20 @@
   }, true);
   window.addEventListener('resize', sizePixels);
 
-  // 물건을 방에 놓고 꾸미기 모드로 연다.
+  // 물건을 방에 놓고 꾸미기 모드로 연다. 새로 놓았으면 'placed', 이미 걸린 훈장을 골랐으면 'exists', 못 놓았으면 null.
   async function placeInRoom(kind, ref) {
     if (kind === 'item') {
       const o = wallet.owned[ref];
       if (!o || o.count - LM.placedCount(state, ref) <= 0) {
         toast('가진 만큼 모두 놓았어요.');
-        return;
+        return null;
       }
     } else if (kind === 'pokemon') {
       ref = Number(ref);
       const o = pkw.owned[ref];
       if (!o || o.count - LM.pkPlacedCount(state, ref) <= 0) {
         toast('가진 만큼 모두 놓았어요.');
-        return;
+        return null;
       }
     } else if (LM.medalPlaced(state, ref)) {
       const r = state.room.items.find((x) => x.kind === 'medal' && x.ref === ref);
@@ -1537,7 +1585,7 @@
       roomEdit = true;
       render();
       toast('이미 벽에 걸려 있어요.');
-      return;
+      return 'exists';
     }
     const item = LM.newRoomItem(kind, ref);
     state.room.items.push(item);
@@ -1545,6 +1593,7 @@
     roomEdit = true;
     await commit();
     render();
+    return 'placed';
   }
 
   async function updateSelected(fn) {
@@ -1605,15 +1654,15 @@
     const { medals, achievements, points } = progress.honors;
     const eq = equippedHonor();
     const medalCards = medals.slice().reverse().map((h) => `
-      <button class="medal-card" data-action="story" data-kind="medal" data-id="${h.entryId}">
+      <button class="medal-card" data-action="story" data-key="${esc(h.key)}">
         ${LM.medalSvg(h, 64)}
         <span class="medal-name">${esc(h.title)}</span>
         <span class="medal-sub">${LM.MEDAL_GRADES[h.grade].label} · ${fmtGameDate(h.gameDate)}</span>
       </button>`).join('');
     const achvRows = achievements.slice().reverse().map((h) => `
-      <button class="achv-row" data-action="story" data-kind="achievement" data-id="${h.entryId}">
+      <button class="achv-row" data-action="story" data-key="${esc(h.key)}">
         <span class="achv-badge">${esc(h.symbol)}</span>
-        <span class="achv-text"><b>${esc(h.title)}</b>${h.description ? `<small>${esc(h.description)}</small>` : ''}</span>
+        <span class="achv-text"><b>${h.kind === 'milestone' ? '<span class="achv-tag">누적</span>' : ''}${esc(h.title)}</b>${h.description ? `<small>${esc(h.description)}</small>` : ''}</span>
         <span class="achv-date">${fmtGameDate(h.gameDate)}</span>
       </button>`).join('');
 
@@ -1658,6 +1707,7 @@
       <h3>훈장과 업적</h3>
       <p>훈장: 기록관이 '나에게 기념할 만한 날'이라고 판단하면 받아요. 업적 포인트 ${Object.values(LM.MEDAL_GRADES).map((g) => `${g.label} ${g.points}`).join(' / ')}. 동·은 훈장은 ${LM.MEDAL_COOLDOWN_DAYS}일에 한 번이고, 금은 언제든 받을 수 있어요.</p>
       <p>업적: 일지를 쓸 때마다 ${Math.round(LM.ACHIEVEMENT_CHANCE * 100)}% 확률로 찾아오고, ${LM.ACHIEVEMENT_PITY}번째 일지까지 안 나오면 확정이에요. 업적 포인트 ${LM.ACHIEVEMENT_POINTS}.</p>
+      <p>누적 업적: 일기에 숫자로 남은 양(스킬에 쓴 시간, 달린 거리, 읽은 쪽수, 횟수 등)은 화면에 보이지 않게 쌓여요. 시간은 ${LM.TIME_MILESTONES.map((t) => t.toLocaleString()).join('·')}시간을 넘으면, 그 밖의 숫자는 기록관이 '의미 있는 큰 숫자를 넘었다'고 판단하면 누적 업적이 돼요. 업적 포인트 ${LM.MILESTONE_POINTS}.</p>
       <p>훈장과 업적의 이름은 칭호가 되어 이름 옆에 달 수 있어요. 업적 포인트는 쓰는 돈이 아니라 쌓이는 기록이에요.</p>
       <h3>퀘스트와 뽑기</h3>
       <p>포인트: 하루 첫 일지 +${LM.DIARY_POINTS}P, 퀘스트 ${KINDS.map((k) => `${LM.QUEST_KINDS[k].label} +${LM.QUEST_KINDS[k].reward}P`).join(' / ')}.</p>
@@ -2033,16 +2083,21 @@
     try {
       await linkAfterLogin(result.cloudHas);
     } catch (err) {
+      // 합치기를 마치지 못했으면 로그아웃해서, 다음에 처음부터 다시 고를 수 있게 한다.
       console.error(err);
       closeModal();
-      toast(err.message || String(err));
+      await LM.sync.logout().catch(() => {});
+      render();
+      toast(`${err.message || String(err)} 다시 로그인해 주세요.`);
     }
   }
 
   // 로그인 직후: 이 기기와 클라우드에 기록이 있는지에 따라 불러오기·올리기·합치기를 정한다.
+  // 동기화 엔진은 여기서 정할 때까지 멈춰 있고, LM.sync.finishLink()를 불러야 돌기 시작한다.
   async function linkAfterLogin(cloudHas) {
     if (!state) {
       if (!cloudHas) {
+        await LM.sync.finishLink();
         closeModal();
         render();
         toast('클라우드에 아직 기록이 없어요. 여기서 새로 시작하면 그 기록이 올라가요.');
@@ -2051,6 +2106,7 @@
       openModal(loadingHtml('클라우드 기록을 불러오는 중…'), { locked: true });
       state = migrate(LM.assembleState(await LM.sync.pullAll()));
       onboardDraft = null;
+      await LM.sync.finishLink();
       await saveSynced();
       LM.db.requestPersist();
       closeModal();
@@ -2062,6 +2118,7 @@
 
     if (!cloudHas) {
       openModal(loadingHtml('이 기기의 기록을 올리는 중…'), { locked: true });
+      await LM.sync.finishLink();
       await LM.sync.syncNow();
       closeModal();
       render();
@@ -2075,6 +2132,7 @@
     const localHas = state.entries.length > 0 || state.gacha.pulls.length > 0;
     if (!localHas) {
       state = cloud;
+      await LM.sync.finishLink();
       await saveSynced();
       closeModal();
       render();
@@ -2106,6 +2164,7 @@
     if (choice === 'cloud') {
       downloadBackup(state);
       state = cloud;
+      await LM.sync.finishLink();
       await saveSynced();
       render();
       toast('클라우드 기록으로 바꿨어요. 이 기기 기록은 백업 파일로 내려받았어요.');
@@ -2114,6 +2173,7 @@
     const keepAi = state.settings.ai;
     state = migrate(LM.firstLinkMerge(state, cloud));
     state.settings.ai = keepAi;
+    await LM.sync.finishLink();
     await commit();
     openModal(loadingHtml('합친 기록을 올리는 중…'), { locked: true });
     await LM.sync.syncNow();
@@ -2145,7 +2205,7 @@
 
   function exportBackup() {
     state.settings.lastBackupAt = downloadBackup(state);
-    commit().then(render);
+    commit().then(render).catch(handleError);
     toast('백업 파일을 저장했어요.');
   }
 
@@ -2255,14 +2315,14 @@
   }
 
   // 길어서 잘린 일기에만 '더 보기' 버튼을 붙인다.
+  // 먼저 모두 재고 나서 한꺼번에 버튼을 넣는다(재고-넣고를 번갈아 하면 일지마다 레이아웃을 다시 계산한다).
   function markClamped() {
-    document.querySelectorAll('.entry-text').forEach((p) => {
+    const clamped = [...document.querySelectorAll('.entry-text')].filter((p) => {
       const next = p.nextElementSibling;
       const hasBtn = next && next.classList.contains('more-btn');
-      if (!p.classList.contains('open') && p.scrollHeight > p.clientHeight + 2 && !hasBtn) {
-        p.insertAdjacentHTML('afterend', '<button class="more-btn" data-action="expand-more">더 보기</button>');
-      }
+      return !hasBtn && !p.classList.contains('open') && p.scrollHeight > p.clientHeight + 2;
     });
+    clamped.forEach((p) => p.insertAdjacentHTML('afterend', '<button class="more-btn" data-action="expand-more">더 보기</button>'));
   }
 
   // ---------- 이벤트 ----------
@@ -2319,7 +2379,7 @@
       case 'story': {
         // 판정 결과 창 안에서 눌렀으면, 이야기 카드에서 그 판정으로 돌아갈 수 있게 한다.
         const fromResult = el.closest('#modal-root') && $modal.querySelector('[data-result]');
-        showStory(el.dataset.kind, id, fromResult ? fromResult.dataset.result : null);
+        showStory(el.dataset.key, fromResult ? fromResult.dataset.result : null);
         break;
       }
 
@@ -2342,6 +2402,7 @@
         const p = state.quests.periods[el.dataset.period];
         if (!p) return;
         p.active = p.active.filter((q) => q.id !== el.dataset.quest);
+        markRemoved(p, el.dataset.quest);
         await commit();
         render();
         break;
@@ -2401,6 +2462,10 @@
         vaultView = el.dataset.view;
         render();
         break;
+      case 'dex-retry':
+        dexState = 'idle';
+        render();
+        break;
       case 'item':
         showItem(el.dataset.item);
         break;
@@ -2438,13 +2503,14 @@
       case 'room-add':
         await placeInRoom(el.dataset.kind, el.dataset.ref);
         break;
-      case 'room-place':
+      case 'room-place': {
         closeModal();
         setTab('character');
-        await placeInRoom(el.dataset.kind, el.dataset.ref);
-        document.getElementById('room').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast('방에 놓았어요. 끌어서 원하는 곳으로 옮겨 보세요.');
+        const placed = await placeInRoom(el.dataset.kind, el.dataset.ref);
+        if (placed) document.getElementById('room').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (placed === 'placed') toast('방에 놓았어요. 끌어서 원하는 곳으로 옮겨 보세요.');
         break;
+      }
       case 'room-size':
         await updateSelected((r) => {
           const i = LM.ROOM_SIZES.indexOf(r.scale);
@@ -2488,8 +2554,7 @@
         await commit();
         render();
         toast(action === 'equip' ? '칭호로 달았어요.' : '칭호를 뗐어요.');
-        const [kind, entryId] = String(key).split(':');
-        showStory(kind, entryId, storyBack);
+        showStory(key, storyBack);
         break;
       }
       case 'choose-title':
@@ -2497,11 +2562,16 @@
         break;
       case 'delete-entry': {
         const doomed = findEntry(id);
+        const hasHonor = doomed && (doomed.medal || doomed.achievement || (doomed.milestones || []).length);
+        // 이 기록으로 받은 포인트를 이미 썼다면, 지운 뒤 보유 포인트가 0 아래로 내려간다는 것을 미리 알린다.
+        const after = LM.wallet({ ...state, entries: state.entries.filter((e) => e.id !== id) }).points;
+        const debt = after < 0 && after < wallet.points
+          ? ` 이 기록으로 받은 포인트를 이미 써서, 지우면 보유 포인트가 ${after.toLocaleString()}P가 돼요.` : '';
         const ok = await confirmModal({
           title: '이 기록을 지울까요?',
-          body: doomed && (doomed.medal || doomed.achievement)
+          body: `${hasHonor
             ? '일기와 이 기록으로 얻은 경험치, 훈장·업적이 함께 사라져요.'
-            : '일기와 이 기록으로 얻은 경험치가 함께 사라져요.',
+            : '일기와 이 기록으로 얻은 경험치가 함께 사라져요.'}${debt}`,
           okLabel: '지우기',
           danger: true,
         });
@@ -2820,7 +2890,7 @@
     draftText = loadDraft();
     render();
     // 포켓몬을 쓰는 중이면 도감을 미리 불러 둔다(기기에 저장돼 있으면 바로 끝난다).
-    if (state && (pkMode() || pkw.kinds > 0)) LM.loadPokedex().then(safeRender).catch(() => {});
+    if (state && (pkMode() || pkw.kinds > 0)) requestDex();
     await LM.sync.init(syncHooks);
     if (LM.sync.loggedIn()) {
       safeRender();

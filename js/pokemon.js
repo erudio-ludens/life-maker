@@ -102,7 +102,14 @@ window.LM = window.LM || {};
     const worker = async () => {
       while (ids.length) {
         const id = ids.shift();
-        const [sp, pk] = await Promise.all([fetchJson(`${API}/pokemon-species/${id}`), fetchJson(`${API}/pokemon/${id}`)]);
+        let sp;
+        let pk;
+        try {
+          [sp, pk] = await Promise.all([fetchJson(`${API}/pokemon-species/${id}`), fetchJson(`${API}/pokemon/${id}`)]);
+        } catch (err) {
+          ids.length = 0; // 하나라도 실패하면 다른 작업자도 더 받지 않고 멈춘다
+          throw err;
+        }
         const ko = sp.names.find((n) => n.language.name === 'ko');
         const parentUrl = sp.evolves_from_species && sp.evolves_from_species.url;
         out.push({
