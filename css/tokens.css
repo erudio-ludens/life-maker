@@ -1,0 +1,229 @@
+/* =========================================================================
+   Material 3 기반 디자인 토큰 — 키다리쌤 / 학습경로연구소
+   - 색: Google material-color-utilities(TonalSpot 방식)로 생성
+         기준색 #1E3A6E(남색) · 보조 강조색 #E8833A(주황)
+   - 서체·모서리·간격·그림자·움직임: Material 3 기본 스케일
+     (한글 가독성을 위해 줄간격·굵기·자간만 조정, 조정한 곳은 '한글 조정'으로 표시)
+   사용법: 프로젝트의 최상위 CSS에서 가장 먼저 불러옵니다.
+   ========================================================================= */
+
+/* ---------- 색 (라이트) ---------- */
+:root {
+  --md-sys-color-primary: #445d94;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #d8e2ff;
+  --md-sys-color-on-primary-container: #2b467a;
+  --md-sys-color-secondary: #575e71;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #dbe2f9;
+  --md-sys-color-on-secondary-container: #3f4759;
+  --md-sys-color-tertiary: #974800;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #ffdbc7;
+  --md-sys-color-on-tertiary-container: #733500;
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #93000a;
+  --md-sys-color-surface: #faf9ff;
+  --md-sys-color-on-surface: #1a1b20;
+  --md-sys-color-surface-variant: #e1e2ec;
+  --md-sys-color-on-surface-variant: #44474f;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f3f3fa;
+  --md-sys-color-surface-container: #eeedf4;
+  --md-sys-color-surface-container-high: #e8e7ef;
+  --md-sys-color-surface-container-highest: #e2e2e9;
+  --md-sys-color-outline: #757780;
+  --md-sys-color-outline-variant: #c5c6d0;
+  --md-sys-color-inverse-surface: #2f3036;
+  --md-sys-color-inverse-on-surface: #f1f0f7;
+  --md-sys-color-inverse-primary: #aec6ff;
+  --md-sys-color-scrim: #000000;
+  --md-sys-color-shadow: #000000;
+  /* 브랜드 원색 — 로고·히어로 배경 등 '면'으로만 사용. 글자색·버튼색은 위 역할 토큰을 쓸 것 */
+  --brand-navy: #1E3A6E;
+  --brand-orange: #E8833A;
+  color-scheme: light;
+}
+
+/* ---------- 색 (다크) ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --md-sys-color-primary: #aec6ff;
+    --md-sys-color-on-primary: #102f62;
+    --md-sys-color-primary-container: #2b467a;
+    --md-sys-color-on-primary-container: #d8e2ff;
+    --md-sys-color-secondary: #bfc6dc;
+    --md-sys-color-on-secondary: #293041;
+    --md-sys-color-secondary-container: #3f4759;
+    --md-sys-color-on-secondary-container: #dbe2f9;
+    --md-sys-color-tertiary: #ffb689;
+    --md-sys-color-on-tertiary: #512400;
+    --md-sys-color-tertiary-container: #733500;
+    --md-sys-color-on-tertiary-container: #ffdbc7;
+    --md-sys-color-error: #ffb4ab;
+    --md-sys-color-on-error: #690005;
+    --md-sys-color-error-container: #93000a;
+    --md-sys-color-on-error-container: #ffdad6;
+    --md-sys-color-surface: #121318;
+    --md-sys-color-on-surface: #e2e2e9;
+    --md-sys-color-surface-variant: #44474f;
+    --md-sys-color-on-surface-variant: #c5c6d0;
+    --md-sys-color-surface-container-lowest: #0c0e13;
+    --md-sys-color-surface-container-low: #1a1b20;
+    --md-sys-color-surface-container: #1e1f25;
+    --md-sys-color-surface-container-high: #282a2f;
+    --md-sys-color-surface-container-highest: #33353a;
+    --md-sys-color-outline: #8e9099;
+    --md-sys-color-outline-variant: #44474f;
+    --md-sys-color-inverse-surface: #e2e2e9;
+    --md-sys-color-inverse-on-surface: #2f3036;
+    --md-sys-color-inverse-primary: #445d94;
+    --md-sys-color-scrim: #000000;
+    --md-sys-color-shadow: #000000;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --md-sys-color-primary: #aec6ff;
+  --md-sys-color-on-primary: #102f62;
+  --md-sys-color-primary-container: #2b467a;
+  --md-sys-color-on-primary-container: #d8e2ff;
+  --md-sys-color-secondary: #bfc6dc;
+  --md-sys-color-on-secondary: #293041;
+  --md-sys-color-secondary-container: #3f4759;
+  --md-sys-color-on-secondary-container: #dbe2f9;
+  --md-sys-color-tertiary: #ffb689;
+  --md-sys-color-on-tertiary: #512400;
+  --md-sys-color-tertiary-container: #733500;
+  --md-sys-color-on-tertiary-container: #ffdbc7;
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-on-error: #690005;
+  --md-sys-color-error-container: #93000a;
+  --md-sys-color-on-error-container: #ffdad6;
+  --md-sys-color-surface: #121318;
+  --md-sys-color-on-surface: #e2e2e9;
+  --md-sys-color-surface-variant: #44474f;
+  --md-sys-color-on-surface-variant: #c5c6d0;
+  --md-sys-color-surface-container-lowest: #0c0e13;
+  --md-sys-color-surface-container-low: #1a1b20;
+  --md-sys-color-surface-container: #1e1f25;
+  --md-sys-color-surface-container-high: #282a2f;
+  --md-sys-color-surface-container-highest: #33353a;
+  --md-sys-color-outline: #8e9099;
+  --md-sys-color-outline-variant: #44474f;
+  --md-sys-color-inverse-surface: #e2e2e9;
+  --md-sys-color-inverse-on-surface: #2f3036;
+  --md-sys-color-inverse-primary: #445d94;
+  --md-sys-color-scrim: #000000;
+  --md-sys-color-shadow: #000000;
+  color-scheme: dark;
+}
+
+/* ---------- 서체 ---------- */
+/* Pretendard: <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"> */
+:root {
+  --md-ref-typeface-brand: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --md-ref-typeface-plain: var(--md-ref-typeface-brand);
+  --md-ref-typeface-numeric: var(--md-ref-typeface-brand); /* 숫자는 font-variant-numeric: tabular-nums 와 함께 */
+
+  /* M3 타이포 스케일 — 크기 / 줄높이 / 굵기 / 자간
+     한글 조정: 본문 줄높이를 M3보다 넓힘(1.5~1.6), 제목 굵기 400→600~700, 제목 자간 -0.01~-0.02em */
+  --md-sys-typescale-display-large:   700 57px/64px var(--md-ref-typeface-brand);
+  --md-sys-typescale-display-medium:  700 45px/52px var(--md-ref-typeface-brand);
+  --md-sys-typescale-display-small:   700 36px/44px var(--md-ref-typeface-brand);
+  --md-sys-typescale-headline-large:  700 32px/40px var(--md-ref-typeface-brand);
+  --md-sys-typescale-headline-medium: 700 28px/36px var(--md-ref-typeface-brand);
+  --md-sys-typescale-headline-small:  600 24px/32px var(--md-ref-typeface-brand);
+  --md-sys-typescale-title-large:     600 22px/30px var(--md-ref-typeface-brand);
+  --md-sys-typescale-title-medium:    600 16px/24px var(--md-ref-typeface-brand);
+  --md-sys-typescale-title-small:     600 14px/20px var(--md-ref-typeface-brand);
+  --md-sys-typescale-body-large:      400 16px/26px var(--md-ref-typeface-plain);
+  --md-sys-typescale-body-medium:     400 14px/22px var(--md-ref-typeface-plain);
+  --md-sys-typescale-body-small:      400 12px/18px var(--md-ref-typeface-plain);
+  --md-sys-typescale-label-large:     500 14px/20px var(--md-ref-typeface-plain);
+  --md-sys-typescale-label-medium:    500 12px/16px var(--md-ref-typeface-plain);
+  --md-sys-typescale-label-small:     500 11px/16px var(--md-ref-typeface-plain);
+
+  --md-sys-typescale-tracking-display: -0.02em;
+  --md-sys-typescale-tracking-headline: -0.015em;
+  --md-sys-typescale-tracking-title: -0.01em;
+  --md-sys-typescale-tracking-body: 0;
+  --md-sys-typescale-tracking-label: 0;
+}
+
+/* ---------- 모서리 (M3 shape scale) ---------- */
+:root {
+  --md-sys-shape-corner-none: 0;
+  --md-sys-shape-corner-extra-small: 4px;   /* 입력창, 메뉴, 툴팁 */
+  --md-sys-shape-corner-small: 8px;         /* 칩, 스낵바, 작은 배지형 상자 */
+  --md-sys-shape-corner-medium: 12px;       /* 카드, 안내 상자 */
+  --md-sys-shape-corner-large: 16px;        /* 큰 카드, 시트 상단, FAB */
+  --md-sys-shape-corner-extra-large: 28px;  /* 대화상자(다이얼로그) */
+  --md-sys-shape-corner-full: 9999px;       /* 버튼, 검색창, 아바타 */
+}
+
+/* ---------- 간격 (4px 그리드) ---------- */
+:root {
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px;
+
+  /* M3 화면 여백(window margin): 600px 미만 16px, 그 이상 24px */
+  --layout-margin: 16px;
+  --layout-gutter: 16px;
+  /* 읽기·입력 화면의 본문 최대 폭 — M3 고정값이 아닌 이 프로젝트 규칙 */
+  --layout-content-max: 720px;
+  --layout-wide-max: 1040px;
+}
+@media (min-width: 600px) {
+  :root { --layout-margin: 24px; --layout-gutter: 24px; }
+}
+
+/* ---------- 높이(그림자) — M3 elevation level 0~5 ---------- */
+:root {
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1: 0 1px 2px rgb(0 0 0 / .30), 0 1px 3px 1px rgb(0 0 0 / .15);
+  --md-sys-elevation-level2: 0 1px 2px rgb(0 0 0 / .30), 0 2px 6px 2px rgb(0 0 0 / .15);
+  --md-sys-elevation-level3: 0 1px 3px rgb(0 0 0 / .30), 0 4px 8px 3px rgb(0 0 0 / .15);
+  --md-sys-elevation-level4: 0 2px 3px rgb(0 0 0 / .30), 0 6px 10px 4px rgb(0 0 0 / .15);
+  --md-sys-elevation-level5: 0 4px 4px rgb(0 0 0 / .30), 0 8px 12px 6px rgb(0 0 0 / .15);
+}
+
+/* ---------- 상태 레이어 (hover/focus/pressed) ---------- */
+:root {
+  --md-sys-state-hover-opacity: .08;
+  --md-sys-state-focus-opacity: .10;
+  --md-sys-state-pressed-opacity: .10;
+  --md-sys-state-dragged-opacity: .16;
+  --md-sys-state-disabled-content-opacity: .38;
+  --md-sys-state-disabled-container-opacity: .12;
+}
+
+/* ---------- 움직임 ---------- */
+:root {
+  --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-sys-motion-duration-short2: 100ms;
+  --md-sys-motion-duration-short4: 200ms;
+  --md-sys-motion-duration-medium2: 300ms;
+  --md-sys-motion-duration-long2: 500ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --md-sys-motion-duration-short2: 0ms; --md-sys-motion-duration-short4: 0ms;
+           --md-sys-motion-duration-medium2: 0ms; --md-sys-motion-duration-long2: 0ms; }
+}
+
+/* ---------- 기본 바탕 ---------- */
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font: var(--md-sys-typescale-body-large);
+  letter-spacing: var(--md-sys-typescale-tracking-body);
+  word-break: keep-all;          /* 한글 단어 중간 줄바꿈 방지 */
+  overflow-wrap: anywhere;
+}

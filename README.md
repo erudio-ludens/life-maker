@@ -90,7 +90,9 @@
 
 ```
 index.html      화면 뼈대
-css/style.css   디자인 (다크 모드 포함)
+css/tokens.css      디자인 시스템 토큰(색·글자·모서리·여백·움직임) — material-design-system 원본 복사본
+css/components.css  디자인 시스템 기본 컴포넌트(카드·버튼·입력창·배너) — 원본 복사본
+css/style.css   이 앱의 화면. 위 두 파일을 먼저 불러오고 그 토큰만 써서 꾸민다 (다크 모드 포함)
 js/rules.js     게임 규칙·밸런스 숫자·경험치 계산
 js/honors.js    훈장 그림(코드로 그림), AI 없을 때의 업적 이름
 js/milestones.js  누적 업적: 숫자 기록 모으기, 누적 기준 확인
